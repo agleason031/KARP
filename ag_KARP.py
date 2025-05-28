@@ -1483,7 +1483,7 @@ if comb_spec == True:
         print("Equivalent Width of line at ", line, "is ", equi_width)
 	
     for i, popt in enumerate(metal_fit):
-    	plt.cla()
+        plt.cla()
         fig, axMet = plt.subplots(1, 1, figsize=(8,6))
         axMet.scatter(gwave,med_comb, s=5,color="black")
         axMet.plot(gwave,G_3d(gwave,popt[0],popt[1],popt[2]))
