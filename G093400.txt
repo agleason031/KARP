@@ -1,0 +1,49 @@
+# KARP Input parameters for G093440
+# Input numbers and locations with no spaces between the equals sign as:
+#myNumber=3.1415
+# Data location:
+dloc=/d/col1/agleason/carp/G093440_data/Chase_G093440/
+# Object ID number, as in G123456
+objid=G093440
+# Object RA in the form "05 02 58.72"
+objRA="23 50 59.00"
+# Object DEC in the form "-70 49 44.7"
+objDEC="+2 36 15.5"
+# Time of Observation of the Object in the form "2015-06-30 23:59:60.500"
+obsTime="2024-09-29 22:30:00.500"
+# Science image number
+scinum=61
+# Argon image number
+argnum=64
+# First flat file number, as "21" for k.021 or similar (assuming linear ordering)
+fstart=1
+# Last flat file number
+fstop=7
+# First bias file number (assuming linear ordering)
+bstart=9
+# Last bias file
+bstop=17
+# Appature width
+appw=20
+# Buffer width
+buffw=20
+# Background width
+bckw=25
+# Center line minimum, where the center line starts being fit by KARP
+clmin=478
+# Center line maximum
+clmax=489
+# Flux normilization line fitting width, in Angstroms
+norm_line_width=250
+# Flux normilization smoothing boxcar width, in Angstroms
+norm_line_boxcar=70
+# Target output directory to save all of the files and reduced data to
+target_dir=/d/col1/agleason/carp/ag_RED_G093440/
+# (Optional) Have KARP just normalize already extracted raw flux values. True and means
+# that KARP skips reducing spectra and just starts normallizing spectra from raw flux data
+# Note that KARP needs to be run once before skip_red=True can be ran
+skip_red=true
+# Median combine reduced spectra
+# True takes all _OUT files and median combines them to create a single, finalized
+# spectra from any number of science images
+comb_spec=true

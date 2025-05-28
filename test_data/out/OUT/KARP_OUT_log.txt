@@ -1,0 +1,4 @@
+KARP is combining spectra
+Using these file names:['/d/col1/agleason/carp/ag_RED_G093440/OUT/G093440_63_OUT.fits', '/d/col1/agleason/carp/ag_RED_G093440/OUT/G093440_62_OUT.fits', '/d/col1/agleason/carp/ag_RED_G093440/OUT/G093440_61_OUT.fits']
+SNR at 5500:140.9920128871041
+(RMS/sig_w55)1.5590274726742765
