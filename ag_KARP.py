@@ -1459,7 +1459,7 @@ if comb_spec == True:
         return G(x, a, mu, sigma, fix_back)
     
     #iterate over metal lines       
-	for i, line in enumerate(metal_lines):
+    for i, line in enumerate(metal_lines):
         ew_sum = 0
         		
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
@@ -1484,7 +1484,7 @@ if comb_spec == True:
         
         #riemann sum equivalent width
         for val in flux_vals:
-        	ew_sum += 0.5 * (1 - val)
+            ew_sum += 0.5 * (1 - val)
         
         #error calculation
         error = np.std(flux_vals)/np.sqrt(len(flux_vals))
@@ -1493,7 +1493,7 @@ if comb_spec == True:
         #print("Model fits", popt)
         print("Equivalent Width of line from guassian at ", line, "is ", equi_width)
         print("Error is", error, "and sys is", sys)
-		print("Equivalent Width of line at", line, "is", ew_sum)
+        print("Equivalent Width of line at", line, "is", ew_sum)
          
 	
     #make graphs of fits around lines
