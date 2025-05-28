@@ -1464,21 +1464,40 @@ if comb_spec == True:
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
         flux_vals = med_comb[mask]
         wave_vals = gwave[mask]
-        x = np.array(wave_vals)    
+        x = np.array(wave_vals) 
+        p0 = [-np.min(flux_vals), line, 2.0]
+        bounds = [(-np.inf,0,1),(0,np.inf,np.inf)]
+           
         #attempt fit
         try:
-            popt, pcov = curve_fit(G_3d, wave_vals, flux_vals, maxfev=5000)
+            popt, pcov = curve_fit(G_3d, wave_vals, flux_vals, p0=p0, bounds=bounds, maxfev=5000)
             metal_fit.append(popt)
             metal_fit_linenum.append(i)
         except RuntimeError:
             print("Curve fit failed")
             
-        line_fit = G_3d(x, popt[0], popt[1], popt[2])
+        line_fit = lambda x: G_3d(x, popt[0], popt[1], popt[2])
         equi_width = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
         
         print("Model fits", popt)
         print("Equivalent Width of line at ", line, "is ", equi_width)
+	
+    for i, popt in enumerate(metal_fit):
+    	plt.cla()
+        fig, axMet = plt.subplots(1, 1, figsize=(8,6))
+        axMet.scatter(gwave,med_comb, s=5,color="black")
+        axMet.plot(gwave,G_3d(gwave,popt[0],popt[1],popt[2]))
+        axMet.axhline(1,color="red",linestyle="--")
+        axMet.axvline(mu,color="black",linestyle="--")
+        axMet.set_xlim(int(metal_lines[i]-metal_mask[i]),int(metal_lines[i]+metal_mask[i]))
+        axMet.set_xlabel("Wavelength (A)")
+        axMet.set_ylabel("Median Normalized Flux")
+        
+        axMet.set_title("Metal line fit at "+str(metal_lines[i])+" A")
+        if i >= 8:
+            axMet.set_ylim(0.9,1.1)
             
+        plt.savefig(str(target_dir)+"OUT/"+str(metal_lines[i]) + ".png", dpi=300)
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
