@@ -1456,19 +1456,18 @@ if comb_spec == True:
     
     fix_back = 1
     def G_3d(x, a, mu, sigma):
-    	return G(x, a, mu, sigma, fix_back)
-        
+        return G(x, a, mu, sigma, fix_back)
+    
     #iterate over metal lines       
     for i, line in enumerate(metal_lines):
     	
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
         flux_vals = med_comb[mask]
         wave_vals = gwave[mask]
-        
-        
+        x = np.array(wave_vals)    
         #attempt fit
         try:
-        	popt, pcov = curve_fit(G_3d, wave_vals, flux_vals, maxfev=5000)
+            popt, pcov = curve_fit(G_3d, wave_vals, flux_vals, maxfev=5000)
             metal_fit.append(popt)
             metal_fit_linenum.append(i)
         except RuntimeError:
