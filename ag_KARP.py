@@ -1446,8 +1446,36 @@ if comb_spec == True:
     print("Radial velocity:",radial_vel,"+/-", radial_vel_err)
     #print(wing_offset)        
     # Look for HI line, 4471.5
+    
+    
+    #find equivalent widths of metal lines
+    metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
+    metal_mask = [5] * 16
+    metal_fit = []
+    metal_fit_linenum = []
+    
+    
+    #iterate over metal lines       
+	for i, line in metal_lines:
+    	
+        mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
+		flux_vals = med_comb[mask]
+        wave_vals = gwave[mask]
+        
+        #attempt fit
+        try:
+			popt, pcov = curve_fit(lambda x, a, mu, sigma : G(x, a, mu, sigma, 1), wave_vals, flux_vals, maxfev=5000)
+			metal_fit.append(popt)
+            metal_fit_linemum.append(i)
+        except RuntimeError:
+            print("Curve fit failed")
             
-
+        line_fit = lambda x: G(x, popt[0], popt[1], popt[2], 1)
+        equi_width = integrate.quad(line_fit, line - metal_mask[i], line + metal_mask[i]
+        
+        print("Equivalent Width of line at ", line, "is ", equi_width)
+            
+            
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
 with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
