@@ -1456,22 +1456,22 @@ if comb_spec == True:
     
     
     #iterate over metal lines       
-	for i, line in metal_lines:
+    for i, line in metal_lines:
     	
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
-		flux_vals = med_comb[mask]
+        flux_vals = med_comb[mask]
         wave_vals = gwave[mask]
         
         #attempt fit
         try:
-			popt, pcov = curve_fit(lambda x, a, mu, sigma : G(x, a, mu, sigma, 1), wave_vals, flux_vals, maxfev=5000)
-			metal_fit.append(popt)
-            metal_fit_linemum.append(i)
+            popt, pcov = curve_fit(lambda x, a, mu, sigma : G(x, a, mu, sigma, 1), wave_vals, flux_vals, maxfev=5000)
+            metal_fit.append(popt)
+            metal_fit_linenum.append(i)
         except RuntimeError:
             print("Curve fit failed")
             
         line_fit = lambda x: G(x, popt[0], popt[1], popt[2], 1)
-        equi_width = integrate.quad(line_fit, line - metal_mask[i], line + metal_mask[i]
+        equi_width = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
         
         print("Equivalent Width of line at ", line, "is ", equi_width)
             
