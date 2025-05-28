@@ -1450,7 +1450,7 @@ if comb_spec == True:
     
     #find equivalent widths of metal lines
     metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
-    metal_mask = [5] * 16
+    metal_mask = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
     metal_fit = []
     metal_fit_linenum = []
     
@@ -1459,8 +1459,9 @@ if comb_spec == True:
         return G(x, a, mu, sigma, fix_back)
     
     #iterate over metal lines       
-    for i, line in enumerate(metal_lines):
-    	
+	for i, line in enumerate(metal_lines):
+        ew_sum = 0
+        		
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
         flux_vals = med_comb[mask]
         wave_vals = gwave[mask]
@@ -1475,13 +1476,27 @@ if comb_spec == True:
             metal_fit_linenum.append(i)
         except RuntimeError:
             print("Curve fit failed")
-            
-        line_fit = lambda x: G_3d(x, popt[0], popt[1], popt[2])
-        equi_width = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
         
-        print("Model fits", popt)
-        print("Equivalent Width of line at ", line, "is ", equi_width)
+        #define function used for fitting    
+        line_fit = lambda x: G_3d(x, popt[0], popt[1], popt[2])
+        integrated, err_integrated = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
+        equi_width = (metal_mask[i] * 2) - integrated
+        
+        #riemann sum equivalent width
+        for val in flux_vals:
+        	ew_sum += 0.5 * (1 - val)
+        
+        #error calculation
+        error = np.std(flux_vals)/np.sqrt(len(flux_vals))
+        sys = .002 * metal_mask[i] * 2
+        
+        #print("Model fits", popt)
+        print("Equivalent Width of line from guassian at ", line, "is ", equi_width)
+        print("Error is", error, "and sys is", sys)
+		print("Equivalent Width of line at", line, "is", ew_sum)
+         
 	
+    #make graphs of fits around lines
     for i, popt in enumerate(metal_fit):
         plt.cla()
         fig, axMet = plt.subplots(1, 1, figsize=(8,6))
@@ -1489,7 +1504,7 @@ if comb_spec == True:
         axMet.plot(gwave,G_3d(gwave,popt[0],popt[1],popt[2]))
         axMet.axhline(1,color="red",linestyle="--")
         axMet.axvline(mu,color="black",linestyle="--")
-        axMet.set_xlim(int(metal_lines[i]-metal_mask[i]),int(metal_lines[i]+metal_mask[i]))
+        axMet.set_xlim(int(metal_lines[i]-5),int(metal_lines[i]+5))
         axMet.set_xlabel("Wavelength (A)")
         axMet.set_ylabel("Median Normalized Flux")
         
