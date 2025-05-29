@@ -1489,7 +1489,7 @@ if comb_spec == True:
             ew_sum += 0.5 * (popt[3] - val)
         
         #error calculation
-        error = np.sqrt(np.sum(np.square(wave_err)))
+        error = np.sqrt(np.sum(np.square(wave_err * 0.5)))
         sys = .002 * metal_mask[i] * 2
         adopt_err = np.sqrt(error**2 + sys**2)
         
@@ -1537,14 +1537,14 @@ if comb_spec == True:
     n_lines = len(metal_lines)
     ncols = 4
     nrows = int(np.ceil(n_lines / ncols))
-    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols*5, nrows*3), sharey=True)
+    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols*5, nrows*3), sharey=False)
     axs = axs.flatten()
 
     for i, popt in enumerate(metal_fit):
         ax = axs[i]
         mask = (gwave > metal_lines[i] - metal_mask[i]) & (gwave < metal_lines[i] + metal_mask[i])
         ax.scatter(gwave[mask], med_comb[mask], s=5, color="black")
-        ax.plot(gwave[mask], G(gwave[mask], *popt), color="orange")
+        ax.plot(gwave, G(gwave, *popt), color="orange")
         ax.axhline(1, color="red", linestyle="--", linewidth=0.8)
         ax.axvline(popt[1], color="blue", linestyle="--", linewidth=0.8)
         ax.set_xlim(metal_lines[i] - metal_mask[i], metal_lines[i] + metal_mask[i])
@@ -1552,12 +1552,18 @@ if comb_spec == True:
         # Remove individual axis labels for clarity
         ax.set_xlabel("")
         ax.set_ylabel("")
+        #set y scale for each plot
+        ydata = med_comb[mask]
+        ymin = np.nanmin(ydata)
+        ymax = np.nanmax(ydata)
+        yrange = ymax - ymin
+        ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
     
     # Hide unused subplots
     for j in range(i+1, len(axs)):
         axs[j].axis('off')
 
-    fig.text(0.5, 0.04, "Wavelength (A)", ha='center', fontsize=16)
+    fig.text(0.55, 0.04, "Wavelength (A)", ha='center', fontsize=16)
     fig.text(0.04, 0.5, "Normalized Flux", va='center', rotation='vertical', fontsize=16)
 
     plt.tight_layout(rect=[0.06, 0.06, 1, 1])  # Leave space for global labels
