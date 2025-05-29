@@ -1465,6 +1465,7 @@ if comb_spec == True:
         mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
         flux_vals = med_comb[mask]
         wave_vals = gwave[mask]
+        wave_err = sig_final[mask]
         x = np.array(wave_vals) 
         p0 = [-np.min(flux_vals), line, 2.0]
         bounds = [(-np.inf,0,1),(0,np.inf,np.inf)]
@@ -1487,7 +1488,7 @@ if comb_spec == True:
             ew_sum += 0.5 * (1 - val)
         
         #error calculation
-        error = np.std(flux_vals)/np.sqrt(len(flux_vals))
+        error = np.sum(np.square(wave_err))
         sys = .002 * metal_mask[i] * 2
         
         #print("Model fits", popt)
