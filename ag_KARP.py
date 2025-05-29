@@ -1450,7 +1450,7 @@ if comb_spec == True:
     
     #find equivalent widths of metal lines
     metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
-    metal_mask = [3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4]
+    metal_mask = [4, 3, 4, 4, 3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4]
     metal_fit = []
     metal_fit_linenum = []
     metal_results = []
