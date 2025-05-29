@@ -1549,19 +1549,22 @@ if comb_spec == True:
         ax.axvline(popt[1], color="blue", linestyle="--", linewidth=0.8)
         ax.set_xlim(metal_lines[i] - metal_mask[i], metal_lines[i] + metal_mask[i])
         ax.set_title(f"{metal_lines[i]:.1f} Å")
-        ax.set_xlabel("Wavelength (A)")
-        if i % ncols == 0:
-            ax.set_ylabel("Norm. Flux")
-        if i >= 8:
-            ax.set_ylim(0.9, 1.1)
+        # Remove individual axis labels for clarity
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+    
     # Hide unused subplots
     for j in range(i+1, len(axs)):
         axs[j].axis('off')
 
-    plt.tight_layout()
+    fig.text(0.5, 0.04, "Wavelength (A)", ha='center', fontsize=16)
+    fig.text(0.04, 0.5, "Normalized Flux", va='center', rotation='vertical', fontsize=16)
+
+    plt.tight_layout(rect=[0.06, 0.06, 1, 1])  # Leave space for global labels
     plt.savefig(str(target_dir) + f"OUT/{objid}_metal_lines_all.png", dpi=300)
     plt.close(fig)
     print(f"Big summary plot saved to {str(target_dir)}OUT/{objid}_metal_lines_all.png")
+
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
