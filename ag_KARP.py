@@ -33,7 +33,7 @@ import time
 import os
 from scipy.interpolate import interp1d
 import pygame
-
+import csv
 
 # Let the user know the program has started
 print("KARP is swimming! (Code is running)")
@@ -1453,6 +1453,7 @@ if comb_spec == True:
     metal_mask = [3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4]
     metal_fit = []
     metal_fit_linenum = []
+    metal_results = []
     
     fix_back = 1
     def G_3d(x, a, mu, sigma):
@@ -1492,6 +1493,8 @@ if comb_spec == True:
         sys = .002 * metal_mask[i] * 2
         adopt_err = np.sqrt(error**2 + sys**2)
         
+        #create csv of data output
+        metal_results.append([line, equi_width, ew_sum, error, sys, (equi_width + ew_sum) / 2, adopt_err])
         
         #print("Model fits", popt)
         print("------------------")
@@ -1500,7 +1503,17 @@ if comb_spec == True:
         print(f"Error is {error:.4f} and sys is {sys}")
         print(f"Adopted is {(equi_width+ew_sum)/2:.4f} with error {adopt_err:.4f}")
          
-	
+    # Write results to CSV after the loop
+    csv_path = str(target_dir) + f"OUT/{objid}_metal_lines.csv"
+    with open(csv_path, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow([
+            "Line (A)", "EW_g", "EW_riemann", "Error", "Sys", "Adopted_EW", "Adopted_Error"
+        ])
+        writer.writerows(metal_results)
+    print(f"Metal line results written to {csv_path}")
+
+
     #make graphs of fits around lines
     for i, popt in enumerate(metal_fit):
         plt.cla()
