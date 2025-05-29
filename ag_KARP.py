@@ -1450,7 +1450,7 @@ if comb_spec == True:
     
     #find equivalent widths of metal lines
     metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
-    metal_mask = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+    metal_mask = [3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4]
     metal_fit = []
     metal_fit_linenum = []
     
@@ -1467,34 +1467,38 @@ if comb_spec == True:
         wave_vals = gwave[mask]
         wave_err = sig_final[mask]
         x = np.array(wave_vals) 
-        p0 = [-np.min(flux_vals), line, 2.0]
-        bounds = [(-np.inf,0,1),(0,np.inf,np.inf)]
+        p0 = [-np.min(flux_vals), line, 2.0, 1.0]
+        bounds = [(-np.inf,0,1, 0.9),(0,np.inf,np.inf, 1.1)]
            
         #attempt fit
         try:
-            popt, pcov = curve_fit(G_3d, wave_vals, flux_vals, p0=p0, bounds=bounds, maxfev=5000)
+            popt, pcov = curve_fit(G, wave_vals, flux_vals, p0=p0, bounds=bounds, maxfev=5000)
             metal_fit.append(popt)
             metal_fit_linenum.append(i)
         except RuntimeError:
             print("Curve fit failed")
         
         #define function used for fitting    
-        line_fit = lambda x: G_3d(x, popt[0], popt[1], popt[2])
+        line_fit = lambda x: G(x, popt[0], popt[1], popt[2], popt[3])
         integrated, err_integrated = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
-        equi_width = (metal_mask[i] * 2) - integrated
+        equi_width = (metal_mask[i] * 2 * popt[3]) - integrated
         
         #riemann sum equivalent width
         for val in flux_vals:
-            ew_sum += 0.5 * (1 - val)
+            ew_sum += 0.5 * (popt[3] - val)
         
         #error calculation
-        error = np.sum(np.square(wave_err))
+        error = np.sqrt(np.sum(np.square(wave_err)))
         sys = .002 * metal_mask[i] * 2
+        adopt_err = np.sqrt(error**2 + sys**2)
+        
         
         #print("Model fits", popt)
-        print("Equivalent Width of line from guassian at ", line, "is ", equi_width)
-        print("Error is", error, "and sys is", sys)
-        print("Equivalent Width of line at", line, "is", ew_sum)
+        print("------------------")
+        print(f"Metal line at {line}")
+        print(f"EW_g is {equi_width:.4f} and EW is {ew_sum:.4f}")
+        print(f"Error is {error:.4f} and sys is {sys}")
+        print(f"Adopted is {(equi_width+ew_sum)/2:.4f} with error {adopt_err:.4f}")
          
 	
     #make graphs of fits around lines
@@ -1502,7 +1506,7 @@ if comb_spec == True:
         plt.cla()
         fig, axMet = plt.subplots(1, 1, figsize=(8,6))
         axMet.scatter(gwave,med_comb, s=5,color="black")
-        axMet.plot(gwave,G_3d(gwave,popt[0],popt[1],popt[2]))
+        axMet.plot(gwave,G(gwave,popt[0],popt[1],popt[2], popt[3]))
         axMet.axhline(1,color="red",linestyle="--")
         axMet.axvline(mu,color="black",linestyle="--")
         axMet.set_xlim(int(metal_lines[i]-5),int(metal_lines[i]+5))
