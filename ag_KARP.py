@@ -1377,7 +1377,7 @@ if comb_spec == True:
     print("Measuring radial velocity of the star")
     # Line names: H theta, H eta, H zeta, H delta, H gamma, H alpha, Ca K, Don;t use: Hbeta, HeI(sdB) 4471.5, HeI 4173, HeI 4922, HeI 5016
     vel_lines = [3797.91,3835.40,3889.06,4101.73,4340.47,6562.79,3933.66] # In angstroms ,,4861.35,4471.5,4713,4922
-    vel_mask = [20,35,35,40,50,50,20,35,10,10,10] # half-width of lines to fit in angstroms
+    vel_mask = [5,5,5,5,5,5,10,10,10,10,10] # half-width of lines to fit in angstroms
     vel_fit = [] # The fit parameters for the velocity fits
     vel_fit_linenum = [] # Which of the seven lines we just fit
     
