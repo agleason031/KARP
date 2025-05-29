@@ -1531,6 +1531,37 @@ if comb_spec == True:
             axMet.set_ylim(0.9,1.1)
             
         plt.savefig(str(target_dir)+"OUT/"+str(metal_lines[i]) + ".png", dpi=300)
+
+
+    #make big plot of all metal lines
+    n_lines = len(metal_lines)
+    ncols = 4
+    nrows = int(np.ceil(n_lines / ncols))
+    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols*5, nrows*3), sharey=True)
+    axs = axs.flatten()
+
+    for i, popt in enumerate(metal_fit):
+        ax = axs[i]
+        mask = (gwave > metal_lines[i] - metal_mask[i]) & (gwave < metal_lines[i] + metal_mask[i])
+        ax.scatter(gwave[mask], med_comb[mask], s=5, color="black")
+        ax.plot(gwave[mask], G(gwave[mask], *popt), color="orange")
+        ax.axhline(1, color="red", linestyle="--", linewidth=0.8)
+        ax.axvline(popt[1], color="blue", linestyle="--", linewidth=0.8)
+        ax.set_xlim(metal_lines[i] - metal_mask[i], metal_lines[i] + metal_mask[i])
+        ax.set_title(f"{metal_lines[i]:.1f} Å")
+        ax.set_xlabel("Wavelength (A)")
+        if i % ncols == 0:
+            ax.set_ylabel("Norm. Flux")
+        if i >= 8:
+            ax.set_ylim(0.9, 1.1)
+    # Hide unused subplots
+    for j in range(i+1, len(axs)):
+        axs[j].axis('off')
+
+    plt.tight_layout()
+    plt.savefig(str(target_dir) + f"OUT/{objid}_metal_lines_all.png", dpi=300)
+    plt.close(fig)
+    print(f"Big summary plot saved to {str(target_dir)}OUT/{objid}_metal_lines_all.png")
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
