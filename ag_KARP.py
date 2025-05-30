@@ -34,6 +34,7 @@ import os
 from scipy.interpolate import interp1d
 import pygame
 import csv
+import grapher
 
 # Let the user know the program has started
 print("KARP is swimming! (Code is running)")
@@ -1447,6 +1448,7 @@ if comb_spec == True:
     #print(wing_offset)        
     # Look for HI line, 4471.5
     
+#---------------------------------------------------
     
     #find equivalent widths of metal lines
     metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
@@ -1494,7 +1496,7 @@ if comb_spec == True:
         adopt_err = np.sqrt(error**2 + sys**2)
         
         #create csv of data output
-        metal_results.append([line, equi_width, ew_sum, error, sys, (equi_width + ew_sum) / 2, adopt_err])
+        metal_results.append([line, equi_width, ew_sum, error, sys, (equi_width + ew_sum) / 2, adopt_err, metal_mask[i]])
         
         #print("Model fits", popt)
         print("------------------")
@@ -1508,69 +1510,19 @@ if comb_spec == True:
     with open(csv_path, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([
-            "Line (A)", "EW_g", "EW_riemann", "Error", "Sys", "Adopted_EW", "Adopted_Error"
+            "Line (A)", "EW_g", "EW_riemann", "Error", "Sys", "Adopted_EW", "Adopted_Error, Width of Mask"
         ])
         writer.writerows(metal_results)
     print(f"Metal line results written to {csv_path}")
 
-
     #make graphs of fits around lines
-    for i, popt in enumerate(metal_fit):
-        plt.cla()
-        fig, axMet = plt.subplots(1, 1, figsize=(8,6))
-        axMet.scatter(gwave,med_comb, s=5,color="black")
-        axMet.plot(gwave,G(gwave,popt[0],popt[1],popt[2], popt[3]))
-        axMet.axhline(1,color="red",linestyle="--")
-        axMet.axvline(mu,color="black",linestyle="--")
-        axMet.set_xlim(int(metal_lines[i]-5),int(metal_lines[i]+5))
-        axMet.set_xlabel("Wavelength (A)")
-        axMet.set_ylabel("Median Normalized Flux")
-        
-        axMet.set_title("Metal line fit at "+str(metal_lines[i])+" A")
-        if i >= 8:
-            axMet.set_ylim(0.9,1.1)
-            
-        plt.savefig(str(target_dir)+"OUT/"+str(metal_lines[i]) + ".png", dpi=300)
-
-
-    #make big plot of all metal lines
-    n_lines = len(metal_lines)
-    ncols = 4
-    nrows = int(np.ceil(n_lines / ncols))
-    fig, axs = plt.subplots(nrows, ncols, figsize=(ncols*5, nrows*3), sharey=False)
-    axs = axs.flatten()
-
-    for i, popt in enumerate(metal_fit):
-        ax = axs[i]
-        mask = (gwave > metal_lines[i] - metal_mask[i]) & (gwave < metal_lines[i] + metal_mask[i])
-        ax.scatter(gwave[mask], med_comb[mask], s=5, color="black")
-        ax.plot(gwave, G(gwave, *popt), color="orange")
-        ax.axhline(1, color="red", linestyle="--", linewidth=0.8)
-        ax.axvline(popt[1], color="blue", linestyle="--", linewidth=0.8)
-        ax.set_xlim(metal_lines[i] - metal_mask[i], metal_lines[i] + metal_mask[i])
-        ax.set_title(f"{metal_lines[i]:.1f} Å")
-        # Remove individual axis labels for clarity
-        ax.set_xlabel("")
-        ax.set_ylabel("")
-        #set y scale for each plot
-        ydata = med_comb[mask]
-        ymin = np.nanmin(ydata)
-        ymax = np.nanmax(ydata)
-        yrange = ymax - ymin
-        ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
+    grapher.metal_line_plt(metal_fit, gwave, med_comb, metal_lines, target_dir)
     
-    # Hide unused subplots
-    for j in range(i+1, len(axs)):
-        axs[j].axis('off')
-
-    fig.text(0.55, 0.04, "Wavelength (A)", ha='center', fontsize=16)
-    fig.text(0.04, 0.5, "Normalized Flux", va='center', rotation='vertical', fontsize=16)
-
-    plt.tight_layout(rect=[0.06, 0.06, 1, 1])  # Leave space for global labels
-    plt.savefig(str(target_dir) + f"OUT/{objid}_metal_lines_all.png", dpi=300)
-    plt.close(fig)
+    #make big plot of all metal lines
+    grapher.metal_line_big_plt(metal_fit, metal_lines, metal_mask, gwave, med_comb, target_dir, objid)
     print(f"Big summary plot saved to {str(target_dir)}OUT/{objid}_metal_lines_all.png")
 
+#--------------------------------------------------------
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
