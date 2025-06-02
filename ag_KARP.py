@@ -35,6 +35,7 @@ from scipy.interpolate import interp1d
 import pygame
 import csv
 import grapher
+import threading
 
 # Let the user know the program has started
 print("KARP is swimming! (Code is running)")
@@ -83,8 +84,16 @@ def take_bait(file):
     # return values
     return params
 
-# initialize global variables
-dloc = objid = objRA = objDEC = otime = scinum = argnum = fstart = fstop = bstart = bstop = appw = buffw = bckw = clmin = clmax = norm_line_width = norm_line_boxcar = target_dir = skip_red = comb_spec = None
+#input string true or false and returns bool
+def string_to_bool(s):
+    return {"true": True, "false": False}.get(s.lower())
+
+# Define a Gaussian
+def G(x, a, mu, sigma, bck):
+    return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
+    # A 4d Gaussian
+
+#get input parameters
 params = take_bait(str(args.kp))
 
 # assign relevant values
@@ -108,13 +117,8 @@ clmax = int(params["clmax"]) # The minimum center line trace value that KARP wil
 norm_line_width = int(params["norm_line_width"])  # When normalizing spectra, this is the one-half width of the line KARP will try and fit at each point
 norm_line_boxcar = int(params["norm_line_boxcar"]) # When normalizing the spectra, 
 target_dir = str(params["target_dir"])
-def string_to_bool(string):
-    # A comparison after converting the string to lower case,
-    # ie, if string=False=false is not equal to true so it returns the boolean value of FALSE
-    # For example: "False".lower() == "true" gives False
-    return string.lower() == "true"
-skip_red = string_to_bool(str(params["skip_red"]))
-comb_spec = string_to_bool(str(params["comb_spec"]))
+skip_red = string_to_bool(params["skip_red"])
+comb_spec = string_to_bool(params["comb_spec"])
 
 print("KARP has taken the bait! (Input file):")
 print("------------")
@@ -135,18 +139,15 @@ elif skip_red == True:
 flux_raw_cor1 = []
 wavelengths = []
 # Global variables
-sim = scinum
 fim = np.arange(fstart,fstop,1)
 bim = np.arange(bstart,bstop,1)
-sim = scinum
-objID = objid # Object ID 
 
 # Make a global "OUT" folder to keep finalized outputs
 os.makedirs(str(target_dir)+"OUT", exist_ok=True) # Initializes a directory OUT files
 # Make a output text file detaling relevant fit paramaters that KARP calculates
 # Initalize directory for reduction plots for this science image
-os.makedirs(str(target_dir)+"ImageNumber_"+str(sim), exist_ok=True) # Initializes a directory for E20 files
-with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "w") as f:
+os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
+with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "w") as f:
     f.write("KARP Output Log\n")
     f.write("- - - ><(((º>\n")
     f.write("\n")
@@ -154,9 +155,9 @@ with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "w") as f:
 if skip_red == False:
     # Create lists of file paths for the Flat and Bias images
     
-    print("KARP is reducing Science Image number:",sim)
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
-        f.write("KARP is reducing Science Image number:"+str(sim)+"\n")
+    print("KARP is reducing Science Image number:",scinum)
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+        f.write("KARP is reducing Science Image number:"+str(scinum)+"\n")
         f.write("KARP has taken the bait! (Input file):\n")
         f.write("------------\n")
         f.write(str(params))
@@ -164,7 +165,6 @@ if skip_red == False:
     
     # Make a list of image paths
     blist = [] # A list of file locations of the bias images
-    
     # Check for image numbers > 10 and append accordingly
     for i in range(len(bim)):
         if float(bim[i]) < 10:
@@ -173,51 +173,32 @@ if skip_red == False:
             blist.append(str(dloc)+"k.00"+str(bim[i])+".fits")
     
     flist = [] # A list of file locations of the flat images
-    
     for i in range(len(fim)):
         if float(fim[i]) < 10:
             flist.append(str(dloc)+"k.000"+str(fim[i])+".fits")
         if float(fim[i]) >= 10:
             flist.append(str(dloc)+"k.00"+str(fim[i])+".fits")
     
-    slocation = []
-    
-    
-    if float(sim) < 10:
-        slocation= str(dloc)+"k.000"+str(sim)+".fits"
-    if float(sim) >= 10:
-        slocation = str(dloc)+"k.00"+str(sim)+".fits"
+    sci_location = []
+    if float(scinum) < 10:
+        sci_location= str(dloc)+"k.000"+str(scinum)+".fits"
+    if float(scinum) >= 10:
+        sci_location = str(dloc)+"k.00"+str(scinum)+".fits"
     
     
     # Make a master bias from the input bias image
     print("Making Master Bias")
     masterbias = ccdproc.combine(blist, method='median', unit='adu',sigma_clip=True, sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,sigma_clip_func=np.ma.median, sigma_clip_dev_func=mad_std,mem_limit=350e6)
-    
-    # Display the image using matplotlib in log space
-    plt.imshow(masterbias)
-    plt.colorbar()
-    plt.title('Master Bias Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"MBias_"+str(sim)+".png")
-    print("Master Bias Made")
+    grapher.plot_masterbias(masterbias, target_dir, scinum, objid)
     
     # Make a master flat from the flat images
     print("Making Master Flat")
     masterflat = ccdproc.combine(flist,method='median', unit='adu',sigma_clip=False,mem_limit=350e6)
-        
-    # Display the image using matplotlib in log space
-    plt.imshow(masterflat)
-    plt.colorbar()
-    plt.title('Master Flat Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"_MFlat_"+str(sim)+".png")
-    print("Master Flat Made")
+    grapher.plot_masterflat(masterflat, target_dir, scinum, objid)
     
     # Subtract Master Bias from Master Flat
     masterflatDEbias = ccdproc.subtract_bias(masterflat,masterbias)
-    plt.imshow(masterflatDEbias)
-    plt.colorbar()
-    plt.title('Master Flat sub Bias Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"_MF_MB_"+str(sim)+".png")
-    print("Master Flat-Bias Made")
+    grapher.plot_masterflatDEbias(masterflatDEbias, target_dir, scinum, objid)
     
     # Smooth master flatdebias:
     np_mfdb = np.asarray(masterflatDEbias) # Convert to a numpy array
@@ -227,12 +208,7 @@ if skip_red == False:
     #top y is 4096
     
     smooth_mf_mb = uniform_filter(np_mfdb, size=5)
-    plt.imshow(smooth_mf_mb)
-    plt.colorbar()
-    plt.title('Smoothed MF_MB Image (5x5 Boxcar)')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"_smoothed_MF_MB_"+str(sim)+".png")
-    print("Smoothed MF_MB Made")
-    
+    grapher.plot_smooth_mf_mb(smooth_mf_mb, target_dir, scinum, objid)
     
     # We can write this to a fits file as:
     #masterflatDEbias.write('np_mfdb.fits')
@@ -272,9 +248,9 @@ if skip_red == False:
     plt.imshow(final_flat)
     plt.colorbar()
     plt.title('Final Flat')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"_final_flat.png")
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_flat.png")
     final_flat_write = CCDData(final_flat, unit="adu")
-    final_flat_write.write(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"final_flat_"+str(sim)+".fits", overwrite = True)
+    final_flat_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"final_flat_"+str(scinum)+".fits", overwrite = True)
     
     print("Final Flat Made")
     
@@ -283,17 +259,17 @@ if skip_red == False:
     # we wait to do that at the end, so we need to do this
     # for each of our sci images
     
-    sci_final = (ccdproc.subtract_bias(CCDData.read(slocation,format = 'fits', unit = "adu"),masterbias).data)/final_flat
+    sci_final = (ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat
     #plt.imshow(sci_final)
     plt.title('Final Science ' + str(scinum))
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+objID+"_final_sci" + str(scinum)+".png")
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_sci" + str(scinum)+".png")
     print("Master Science Number: " + str(scinum) + " Made")
     sci_final_write = CCDData(sci_final, unit="adu")
-    sci_final_write.write(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"sci_final_"+str(sim)+".fits", overwrite = True)
+    sci_final_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
     
     
     # Read all three of our final sci images and convert to nparrays
-    sci_final_1 = np.asarray(CCDData.read(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"sci_final_"+str(sim)+".fits", unit = "adu").data)
+    sci_final_1 = np.asarray(CCDData.read(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", unit = "adu").data)
     
     # Convert from ADU to electrons
     sci_final_1 = sci_final_1*0.6
@@ -302,12 +278,7 @@ if skip_red == False:
     a_width = int(appw) # Pixel aperture width
     buff_width = int(buffw) # Width of the buffer
     bckrnd_width = int(bckw) # Background width
-    # Make a gaussian function to call later
     
-    # Define a Gaussian
-    def G(x, a, mu, sigma, bck):
-        return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
-        # A 4d Gaussian
     
     
     n_rows = sci_final_1.shape[0]  # This gets the number of rows
@@ -328,7 +299,7 @@ if skip_red == False:
         y_vals = row[(clr-a_width) : (clr+a_width)] # Get y values from the same pixels
         y_vals_bck = row[(clr-a_width-buff_width-bckrnd_width) : (clr+a_width+buff_width+bckrnd_width)]
         
-        amp_guess = np.max(y_vals)  # Peak height
+        amp_guess = np.max(y_vals) - np.median(y_vals_bck) # Peak height - background
         mu_guess = clr  # Guess our center line trace as the Gaus center
         sigma_guess = 2.0  # Guess a sigma value of 2
         bck_guess = np.median(y_vals_bck) # Guess background level is just the median of the values out to background app
@@ -449,7 +420,7 @@ if skip_red == False:
     axcs.scatter(censcat,cen_line, s=3)
     axcs.set_xlabel("Y Pixel")
     axcs.set_ylabel("X Pixel")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"cen_line_"+str(sim)+".png")
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"cen_line_"+str(scinum)+".png")
     print("len(cen_line)",len(cen_line))
     
     
@@ -464,57 +435,17 @@ if skip_red == False:
     print("KARP finished fitting flux Gaussians")
     
     print("10 Flux Fit Parameters:")
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("10 Flux Fit Parameters:"+"\n")
     for i in range(0,4000,400):
         a, mu, sigma, bck = sci1_fit[i]
         print("Y:",i," a:",a," mu:",mu," sig:",sigma," bck:",bck)
-        with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+        with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
             f.write("Y:"+str(i)+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
     
     # Plot Gaussian center values vs y pix and Gaussian sigma value vs Y pix
     print("Plotting Gauss cen values and Gauss sig values vs Y pix")
-    fig, axc = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(sci1_fit)):
-        a, mu, sigma, bck = sci1_fit[i]
-        if np.isnan(a):
-            continue
-        axc.scatter(i,mu, s=1, color = 'blue')
-        censcat = np.arange(0,len(cen_line),1)
-        axc.scatter(censcat,cen_line, s=3, color = 'black')
-        axc.tick_params(labelsize=14)
-        axc.set_xlabel("Y Pix", size=14)
-        axc.set_ylabel("G fit mu", size=14)
-    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Gcen_y_Cenline_"+str(sim)+".png")
-    
-    # Now for sigma
-    fig, axs = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(sci1_fit)):
-        a, mu, sigma, bck = sci1_fit[i]
-        if np.isnan(a):
-            continue
-        axs.scatter(i,sigma, color = 'green')
-        axs.tick_params(labelsize=14)
-        axs.set_xlabel("Y Pix", size=14)
-        axs.set_ylabel("G fit Sig", size=14)
-    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Gsig_y_"+str(sim)+".png")
-
-    # Make a zoomed in plot
-    plt.cla()
-    fig, axs = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(sci1_fit)):
-        a, mu, sigma, bck = sci1_fit[i]
-        if np.isnan(a):
-            continue
-        axs.scatter(i,sigma, color = 'green')
-        axs.tick_params(labelsize=14)
-        axs.set_xlabel("Y Pix", size=14)
-        axs.set_ylabel("G fit Sig", size=14)
-        axs.set_ylim(0,2)
-    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Gsig_y_ZOOM"+str(sim)+".png")
+    grapher.gauss_cen_plots(sci1_fit, cen_line, target_dir, scinum)
     
     cen_line = np.round(cen_line).astype(int)
     # Make a plot of 20 evenly spaced pix
@@ -536,8 +467,8 @@ if skip_red == False:
         plt.xlim((cen_line[i]-a_width),(cen_line[i]+a_width))
         plt.xlabel("X pixels")
         plt.ylabel("Counts (e-)")
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"E20Fits_"+str(sim), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"E20Fits_"+str(sim)+"/E20Fit"+str(i)+".png")
+        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Fits_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
+        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Fits_"+str(scinum)+"/E20Fit"+str(i)+".png")
     
     
     print("Making 20 aperture plots")
@@ -564,8 +495,8 @@ if skip_red == False:
         plt.xlim((cen_line[i]-a_width-buff_width-bckrnd_width-1),(cen_line[i]+a_width+buff_width+bckrnd_width+2))
         plt.xlabel("X pixels")
         plt.ylabel("Counts (e-)")
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"E20Data_"+str(sim), exist_ok=True) # Initalizes a dircetory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"E20Data_"+str(sim)+"/EData"+str(i)+".png")
+        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Data_"+str(scinum), exist_ok=True) # Initalizes a dircetory for E20 files
+        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Data_"+str(scinum)+"/EData"+str(i)+".png")
     
     
     # Now set down an aparature and get the flux
@@ -597,7 +528,7 @@ if skip_red == False:
     plt.scatter(y_pix,flux_raw1, s=1)
     plt.xlabel("Y Pixel")
     plt.ylabel("Background subtracted Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Flux_bsub_"+str(sim)+".png", dpi=300)
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_bsub_"+str(scinum)+".png", dpi=300)
     #plt.show()
     
     # Now we need to calibrate our flux to wavelength
@@ -661,14 +592,14 @@ if skip_red == False:
     
     
     print("KARP fitted ", len(lam_fit), " lines")
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
     cfits = [] # Empty array for putting the fitted line centers
     for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
         cfits.append(lam_fit[i][1])
         
     print("Argon Lines Fit Parameters:")
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("Argon Lines Fit Parameters:\n")
 
     s_lsp = [] # Sigmas of the lam line fits for the line split function
@@ -676,16 +607,16 @@ if skip_red == False:
         a, mu, sigma, bck = lam_fit[i]
         s_lsp.append(sigma)
         print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
-        with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+        with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
             f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
     #for i in range(len(lam_fit_linenum)):
     #   print("Lam:",lam_fit_linenum[i],"pixc:",lam_fit_pixc[i],"ycen actual fit to argon lines:",cfits[i])
     
     print("Line Split Function:",np.mean(s_lsp))
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
     print("(avg of sig of line fits)")
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("(avg of sig of line fits)\n")
     
     """
@@ -809,8 +740,8 @@ if skip_red == False:
     plt.xlabel("Wavelength (A)")
     plt.ylabel("Background subtracted Flux (Electrons)")
     plt.ylim(0,30000)
-    plt.title("Sci Image"+str(sim))
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Flux_LamCal_"+str(sim)+".png", dpi=300)
+    plt.title("Sci Image"+str(scinum))
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_LamCal_"+str(scinum)+".png", dpi=300)
     #plt.show()
     
     print("Calculating RMS A")
@@ -835,7 +766,7 @@ if skip_red == False:
     for i in range(len(del_lam)):
         dlS.append(del_lam[i]**2)
     print("RMS A:",np.sqrt(np.mean(dlS)))
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("RMS A:"+str(np.sqrt(np.mean(dlS)))+"\n")
     print("Calculating RMS km/s")
     dlols = [] # Delta lambda over lambda
@@ -844,7 +775,7 @@ if skip_red == False:
     
     
     print("RMS km/s:",np.sqrt(np.mean(dlols))*3*10**5)
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("RMS km/s:"+str(np.sqrt(np.mean(dlols))*3*10**5)+"\n")
     
     # Should be ~10 km/s 0.1 A or even 0.05 A
@@ -855,7 +786,7 @@ if skip_red == False:
         axL.set_xlabel("Y Pixel Value")
         axL.set_ylabel("Angstroms")
     
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"LamCalRes_"+str(sim)+".png")
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_"+str(scinum)+".png")
     
     # Print RMS in A, and in velocity
     # and plot counts vs error
@@ -880,12 +811,12 @@ if skip_red == False:
         axV.set_ylabel("km/s")
         
     
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"LamCalRes_Velocity_"+str(sim)+".png")
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_Velocity_"+str(scinum)+".png")
     
     
     print("Mean Wavelength residual (delLAM):",np.mean(del_lam))
     print("Mean Velocity residual (delVEL):",np.mean(res_vel))
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
         f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
     
@@ -899,7 +830,7 @@ if skip_red == False:
     axE.scatter(y_lam(y_pix),rnErr, s=1,color='red')
     axE.set_xlabel("Wavelength (A), Error (10x)")
     axE.set_ylabel("Background subtracted Flux (Electrons)")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Flux_LamCal_Res_"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_LamCal_Res_"+str(scinum)+".png", dpi=300)   
     
     # Print dispersion, as (number of angstroms we go over/number of pixels (4096))
     # Recall that our lam is fit inverse of our pixels, ie 246 pix = 6000 Angstroms
@@ -910,25 +841,25 @@ if skip_red == False:
     print("Dispersion: ",(lam_out_max-lam_out_min)/len(y_pix), " Angstroms/pix")
     dispersion = (lam_out_max-lam_out_min)/len(y_pix)
     
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("lam_out_max:"+str(lam_out_max)+"\n")
         f.write("lam_out_min:"+str(lam_out_min)+"\n")
         f.write("Dispersion:"+str((lam_out_max-lam_out_min)/len(y_pix))+"Angstroms/pix\n")
         
     # Store flux_raw_cor1
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"flux_raw_cor1_"+str(sim)+".txt", "w") as file:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt", "w") as file:
         for val in flux_raw_cor1:
             file.write(f"{val}\n")
     
     # Store y_lam(y_pix)=wavelengths
     # Heliocentric correction here as well (Should be carried over from y_lam)
     wavelengths = y_lam(y_pix) # Wavelength of each pixel
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"wavelengths_"+str(sim)+".txt", "w") as file:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt", "w") as file:
         for wave in wavelengths:
             file.write(f"{wave}\n")
 
     # Store raw sky values
-    with open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"skyraw_"+str(sim)+".txt", "w") as file:
+    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"skyraw_"+str(scinum)+".txt", "w") as file:
         for sky in sky_raw1:
             file.write(f"{sky}\n")
 
@@ -945,17 +876,17 @@ if comb_spec == False:
     # H_8,H_eta, H_zeta,Ca_K,Ca_H, H_epsilon,H_delta,H_gamma, H_beta, SodiumD2, SodiumD1, H_alpha
     features = [3796.94,3835.40,3889.06,3933.7,3969,3970.075,4101.73,4340.47,4861.35,5889.96,5895.93,6562.81]
     if skip_red == True:
-        flux_raw_cor1a = open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"flux_raw_cor1_"+str(sim)+".txt") # read in raw flux
+        flux_raw_cor1a = open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt") # read in raw flux
         flux_raw_cor1a1 = flux_raw_cor1a.read()
         flux_raw_cor1b = flux_raw_cor1a1.splitlines()
         flux_raw_cor1a.close()
         
-        wavelengths1a = open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"wavelengths_"+str(sim)+".txt") # read in corresponding wavelengths
+        wavelengths1a = open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt") # read in corresponding wavelengths
         wavelengths1a1 = wavelengths1a.read()
         wavelengthsb = wavelengths1a1.splitlines()
         wavelengths1a.close()
         
-        sky1a = open(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"wavelengths_"+str(sim)+".txt") # read in corresponding wavelengths
+        sky1a = open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt") # read in corresponding wavelengths
         sky1a1 = sky1a.read()
         skyb = sky1a1.splitlines()
         sky1a.close()
@@ -1048,8 +979,8 @@ if comb_spec == False:
     # 6 Zoomed in sci_flux_masked plots
     for i in range(0,3000,500):
         axE.set_xlim((3700+i),(4200+i))
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Flux_Masked_All_"+str(sim), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/Sci_Flux_Masked_All_"+str(sim)+"/Sci_Flux_Masked_All_i"+str(sim)+"_"+str(i)+".png", dpi=300)   
+        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_Masked_All_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
+        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/Sci_Flux_Masked_All_"+str(scinum)+"/Sci_Flux_Masked_All_i"+str(scinum)+"_"+str(i)+".png", dpi=300)   
     
     
     Fnorm_Es = [] # Estimated normalized flux
@@ -1062,7 +993,7 @@ if comb_spec == False:
     axCont.scatter(wavelengths,Fnorm_Es, s=1,color="green")
     axCont.set_xlabel("Wavelength (A)")
     axCont.set_ylabel("Estimate Cont. Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Flux_NormEst_"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_NormEst_"+str(scinum)+".png", dpi=300)   
     
     
     print("Line-fit normilization")
@@ -1116,7 +1047,7 @@ if comb_spec == False:
                 if len(wave_range_cor) >= 2: # Check if we have enough points to fit
                     """
                     for k in range(len(wave_range_cor)): # Since the continum fit is so poor in the noisy areas
-                        # Simply remove outlier values from our wave ranges when we do fitting
+                        # scinumply remove outlier values from our wave ranges when we do fitting
                         # Good continum fits shouldn't have this problem, and won't activate this section of code
                         if float(wave_range_cor[k]) >= 1.3*np.mean(wave_range_cor):
                             print("Found: wave_range_cor[k] >= 1.3*np.mean(wave_range_cor)")
@@ -1171,7 +1102,7 @@ if comb_spec == False:
                 lam_removea.append(wavelengths[i])
 
     plt.xlim(4100,4200)    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"LineFitPlots.png", dpi=300)
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LineFitPlots.png", dpi=300)
     # Now smooth this fit with a moving boxcar
     smooth_cont = uniform_filter(np.array(fitted_values), size=norm_line_boxcar)
     
@@ -1185,7 +1116,7 @@ if comb_spec == False:
     axL.scatter(lam_removea,flux_mask_removea,s=0.1,color="red")
     axL.set_xlabel("Wavelength (A)")
     axL.set_ylabel("Fitted Values over Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"FitOverFlux_"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFlux_"+str(scinum)+".png", dpi=300)   
     
     # Maybe overplot the before and after continums, with and without the removed points to see how much,
     # if at all the points are affecting the continum fit?
@@ -1201,8 +1132,8 @@ if comb_spec == False:
         axL.set_xlabel("Wavelength (A)")
         axL.set_ylabel("Fitted Values over Flux")
         axL.set_xlim((i),(i+1000))
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"FitOverFluxZoom_"+str(sim), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"FitOverFluxZoom_"+str(sim)+"/FitOverFlux_iter_"+str(sim)+"_"+str(i)+".png", dpi=300)   
+        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
+        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum)+"/FitOverFlux_iter_"+str(scinum)+"_"+str(i)+".png", dpi=300)   
     
     
     Fnorm = [] # Normalized flux
@@ -1229,9 +1160,9 @@ if comb_spec == False:
     axNorm.axhline(1,color="red",linestyle="--")
     axNorm.set_xlabel("Wavelength (A)")
     axNorm.set_ylabel("Normalized Flux")
-    axNorm.set_title("Normalized Spectra for "+str(objID)+" Image:"+str(sim))
+    axNorm.set_title("Normalized Spectra for "+str(objid)+" Image:"+str(scinum))
     axNorm.set_ylim(0,1.5)
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Normalized_"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_"+str(scinum)+".png", dpi=300)   
     
     # Some other diagnostic plots
     plt.cla()
@@ -1241,7 +1172,7 @@ if comb_spec == False:
     axNorm.axhline(1,color="red",linestyle="--")
     axNorm.set_xlabel("Wavelength (A)")
     axNorm.set_ylabel("Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Normalized_Left"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_Left"+str(scinum)+".png", dpi=300)   
     
     
     plt.cla()
@@ -1249,12 +1180,14 @@ if comb_spec == False:
     axNorm.scatter(fitted_wavelengths[2700:3300],Fnorm[2700:3300], s=1,color="black")
     axNorm.set_xlabel("Wavelength (A)")
     axNorm.set_ylabel("Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(sim)+"/"+"Sci_Normalized_hbeta"+str(sim)+".png", dpi=300)   
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_hbeta"+str(scinum)+".png", dpi=300)   
     
     # Write a file for the spectra of this sci image
     # In the form G123456_61_OUT.fits in the OUT folder
     t = Table([fitted_wavelengths,Fnorm,sf_sm], names=('Lam', "Flux", "Sigma"))
-    t.write(str(target_dir)+"OUT/"+str(objid)+"_"+str(sim)+"_OUT.fits", format='fits', overwrite=True)
+    t.write(str(target_dir)+"OUT/"+str(objid)+"_"+str(scinum)+"_OUT.fits", format='fits', overwrite=True)
+
+#---------------------------------
 
 # If comb_spec = True, then take a number of input tables labled as
 # G123456_61_OUT.txt, G123456_62_OUT.txt, G123456_63_OUT.txt
@@ -1346,7 +1279,7 @@ if comb_spec == True:
         fo.write("(RMS/sig_w55)"+str(RMS/sig_w55)+"\n")
     
     axNorm.scatter(gwave,sig_final, s=0.3,color="red")
-    axNorm.set_title("Median Normalized Spectra for "+str(objID)+", SNR 5500 A:"+str(np.round(1/RMS, decimals=2)))
+    axNorm.set_title("Median Normalized Spectra for "+str(objid)+", SNR 5500 A:"+str(np.round(1/RMS, decimals=2)))
     
     # Over plot Max's spectra for G093440
     # Remember to comment out later
@@ -1374,6 +1307,8 @@ if comb_spec == True:
         plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT_Zoom"+str(i)+".png", dpi=300)
 
 
+#------------------------------------
+
     # Measure the radial velocity of the star based on these 7 absorption lines
     print("Measuring radial velocity of the star")
     # Line names: H theta, H eta, H zeta, H delta, H gamma, H alpha, Ca K, Don;t use: Hbeta, HeI(sdB) 4471.5, HeI 4173, HeI 4922, HeI 5016
@@ -1381,11 +1316,6 @@ if comb_spec == True:
     vel_mask = [5,5,5,5,5,5,10,10,10,10,10] # half-width of lines to fit in angstroms
     vel_fit = [] # The fit parameters for the velocity fits
     vel_fit_linenum = [] # Which of the seven lines we just fit
-    
-    # Define a Gaussian
-    def G(x, a, mu, sigma, bck):
-        return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
-        # A 4d Gaussian
     
     
     wing_offset = []
@@ -1412,34 +1342,11 @@ if comb_spec == True:
     # Line names: H theta, H eta, H zeta, H delta, H gamma, H alpha, Ca K
     line_velocities_karp = [] # The velocites of the absorption lines that we get from KARP
     for i in range(len(vel_fit)):
-        a, mu, sig, bck = vel_fit[i]
-        print("For line:",vel_fit_linenum[i]+1,"KARP fit:",mu,"Angstroms")
-        print("a:",a,"sig:",sig,"bck:",bck)
+        mu= vel_fit[i][1]
         line_velocities_karp.append(((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)
-        print("(lam-lam_0)/lam_0:",((float(mu)-float(vel_lines[i]))/float(vel_lines[i])),"A")
-        print("mu in km/s:",((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)
-        plt.cla()
-        fig, axVel = plt.subplots(1, 1, figsize=(8,6))
-        axVel.scatter(gwave,med_comb, s=5,color="black")
-        axVel.plot(gwave,G(gwave,a,mu,sig,bck))
-        axVel.axhline(1,color="red",linestyle="--")
-        axVel.axvline(mu,color="black",linestyle="--")
-        # Correct Max's points for heliocentric velocity with v=4km/s
-        for j in range(len(wout)):
-            wout[j] = wout[j]*(1+(4/(3*10**5)))
-        
-        axVel.scatter(wout,fout,color="green",s=1)
-        axVel.axvline(vel_lines[i],color="blue",linestyle="--")
-        axVel.set_xlim(int(vel_lines[i]-vel_mask[i]),int(vel_lines[i]+vel_mask[i]))
-        axVel.set_xlabel("Wavelength (A)")
-        axVel.set_ylabel("Median Normalized Flux")
-        del_vel_lam = np.round(float(mu)-float(vel_lines[i]),decimals=4)
-        axVel.set_title("lam-lam_0: "+str(del_vel_lam)+" A")
-        if i >= 8:
-            axVel.set_ylim(0.9,1.1)
-            axVel.set_title("HeI "+str(vel_lines[i])+"A line lam-lam_0: "+str(del_vel_lam)+" A radV: "+str(((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)+"km/s")
-        
-        plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_Vel_"+str(i+1)+".png", dpi=300)
+    
+    #plot the region around graphs
+    grapher.plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, wout, fout, vel_mask, target_dir, objid)
     
     # average the velocities of the 7 lines:
     radial_vel = np.mean(line_velocities_karp)
@@ -1526,7 +1433,7 @@ if comb_spec == True:
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
-with open(str(target_dir)+"ImageNumber_"+str(sim)+"/KARP_log.txt", "a") as f:
+with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
     f.write("KARP took:"+str(duration_run)+" to run\n")
     f.write("><(((º>")
     
