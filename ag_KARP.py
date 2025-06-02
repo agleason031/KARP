@@ -875,8 +875,6 @@ if comb_spec == False:
         wavelengths = [float(val) for val in wavelengthsb]
         sky_raw1 = [float(val) for val in skyb]
     
-        
-        
     # Remove 4 pixels from either edge to ensure bad chip pixels aren't affecting our fits
     flux_raw_cor1 = flux_raw_cor1[3:-4]
     wavelengths = wavelengths[3:-4]
