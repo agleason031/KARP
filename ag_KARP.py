@@ -12,7 +12,6 @@ Created by Chase L. Smith, Max Moe
 
 # Importing relevant packages
 import numpy as np
-import matplotlib.pyplot as plt
 import argparse
 import ccdproc
 from astropy.nddata import CCDData
@@ -35,8 +34,29 @@ from scipy.interpolate import interp1d
 import pygame
 import csv
 import grapher
-import threading
 
+#-------------------------------
+#constant definitions
+
+#sound related
+pygame.mixer.init(frequency=44100, size=-16, channels=1)
+# Generate sine wave
+duration = 0.07 # seconds
+freq = 777  # Hz
+freq1 = 600
+sample_rate = 44100
+t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+waveform = np.sin(2 * np.pi * freq * t)
+waveform1 = np.sin(2 * np.pi * freq1 * t)
+# Convert to 16-bit signed integers
+audio = np.int16(waveform * 32767).tobytes()
+audio1 = np.int16(waveform1 * 32767).tobytes()
+# Create sound objects
+sound = pygame.mixer.Sound(buffer=audio)
+sound1 = pygame.mixer.Sound(buffer=audio1)
+
+
+#----------------------------------
 # Let the user know the program has started
 print("KARP is swimming! (Code is running)")
 print("><(((º>")
@@ -244,14 +264,7 @@ if skip_red == False:
         for k in range(len(yOther1)):
             final_flat[yOther1[k], xOther1[i]] = 1
     
-    # Plot final flat
-    plt.imshow(final_flat)
-    plt.colorbar()
-    plt.title('Final Flat')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_flat.png")
-    final_flat_write = CCDData(final_flat, unit="adu")
-    final_flat_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"final_flat_"+str(scinum)+".fits", overwrite = True)
-    
+    grapher.plot_final_flat(final_flat, target_dir, scinum, objid)
     print("Final Flat Made")
     
     # Subtract off the bias from each of our science images
@@ -260,13 +273,7 @@ if skip_red == False:
     # for each of our sci images
     
     sci_final = (ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat
-    #plt.imshow(sci_final)
-    plt.title('Final Science ' + str(scinum))
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_sci" + str(scinum)+".png")
-    print("Master Science Number: " + str(scinum) + " Made")
-    sci_final_write = CCDData(sci_final, unit="adu")
-    sci_final_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
-    
+    grapher.plot_sci_final(sci_final, target_dir, scinum, objid)
     
     # Read all three of our final sci images and convert to nparrays
     sci_final_1 = np.asarray(CCDData.read(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", unit = "adu").data)
@@ -278,8 +285,6 @@ if skip_red == False:
     a_width = int(appw) # Pixel aperture width
     buff_width = int(buffw) # Width of the buffer
     bckrnd_width = int(bckw) # Background width
-    
-    
     
     n_rows = sci_final_1.shape[0]  # This gets the number of rows
     print("n_rows:",n_rows)
@@ -312,26 +317,6 @@ if skip_red == False:
         except RuntimeError:
             return [np.nan, np.nan, np.nan, np.nan]
     
-    
-    """
-    print("Plotting YMaxRow")
-    fig, axSC = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(cen_line)):
-        axSC.scatter(cen_line[i],np.max(sci_final_1[i])) # Max electron value in the whole row
-        axSC.set_xlabel("Center Line Pixel")
-        axSC.set_ylabel("Max Y Pix in the row")
-    
-    plt.savefig("YMaxRow.png")
-    
-    fig, axSCa = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(cen_line)):
-        rowin = sci_final_1[i]
-        axSCa.scatter(cen_line[i],np.max(rowin[(cen_line[i]-a_width) : (cen_line[i]+a_width)])) # Max electron value in our aperture
-        axSCa.set_xlabel("Center Line Pixel")
-        axSCa.set_ylabel("Max Y Pix in the row")
-        
-    plt.savefig("YMaxRowInApp.png")
-    """
     # Fit Gaussian to each row in sci_final_1 using current cen_line estimate
     print("KARP fitting centerline")
     
@@ -414,15 +399,7 @@ if skip_red == False:
     # cen_line is now cleaned, smoothed, and robust to fitting artifacts
     cen_line = np.sort(cen_line)
     # Doesn't change the number of cen_line pixels, just sorts outliers
-    
-    fig, axcs = plt.subplots(1, 1, figsize=(8,6))
-    censcat = np.arange(0,len(cen_line),1)
-    axcs.scatter(censcat,cen_line, s=3)
-    axcs.set_xlabel("Y Pixel")
-    axcs.set_ylabel("X Pixel")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"cen_line_"+str(scinum)+".png")
-    print("len(cen_line)",len(cen_line))
-    
+    grapher.plot_cen_line(cen_line, target_dir, scinum)
     
     # Fit parameters to each row
     sci1_fit = []
@@ -452,52 +429,10 @@ if skip_red == False:
     # Showing the data, the apertures and buffers as lines,
     # And the over plotted G fit
     print("Making 20 aperture fit plots")
-    for i in range(0,4000,200):
-        plt.clf()
-        a, mu, sigma, bck = sci1_fit[i]
-        rowin = sci_final_1[i]
-        x_vals = np.arange((cen_line[i]-a_width-buff_width-bckrnd_width),(cen_line[i]+a_width+buff_width+bckrnd_width+1))
-        # Add an extra +1 to the plt.step width to account for the default plt.step parameters
-        plt.step(x_vals,rowin[(cen_line[i]-a_width-buff_width-bckrnd_width):(cen_line[i]+a_width+buff_width+bckrnd_width+1)],where='mid',color="black")
-        # Plot center line
-        plt.axvline(cen_line[i],color="black",linestyle="--")
-    
-        x_plot_lin = np.linspace((cen_line[i]-a_width),(cen_line[i]+a_width))
-        plt.plot(x_plot_lin,G(x_plot_lin,a,mu,sigma,bck), color="purple")
-        plt.xlim((cen_line[i]-a_width),(cen_line[i]+a_width))
-        plt.xlabel("X pixels")
-        plt.ylabel("Counts (e-)")
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Fits_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Fits_"+str(scinum)+"/E20Fit"+str(i)+".png")
-    
+    grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
     
     print("Making 20 aperture plots")
-    for i in range(0,4000,200):
-        plt.clf()
-        a, mu, sigma, bck = sci1_fit[i]
-        rowin = sci_final_1[i]
-        x_vals = np.arange((cen_line[i]-a_width-buff_width-bckrnd_width),(cen_line[i]+a_width+buff_width+bckrnd_width+1))
-        # Add an extra +1 to the plt.step width to account for the default plt.step parameters
-        plt.step(x_vals,rowin[(cen_line[i]-a_width-buff_width-bckrnd_width):(cen_line[i]+a_width+buff_width+bckrnd_width+1)],where='mid',color="black")
-        # Plot center line and aw, bw, buffw
-        plt.axvline(cen_line[i],color="black",linestyle="--")
-        plt.axvline((cen_line[i]-a_width),color="blue",linestyle="-")
-        plt.axvline((cen_line[i]+a_width),color="blue",linestyle="-")
-        plt.axvline((cen_line[i]-a_width-buff_width),color="red",linestyle="-")
-        plt.axvline((cen_line[i]+a_width+buff_width),color="red",linestyle="-")
-        plt.axvline((cen_line[i]-a_width-buff_width-bckrnd_width),color="green",linestyle="-")
-        plt.axvline((cen_line[i]+a_width+buff_width+bckrnd_width),color="green",linestyle="-")
-        plt.axvline(cen_line[i],color="black",linestyle="--")
-        x_plot_lin = np.linspace((cen_line[i]-a_width),(cen_line[i]+a_width))
-        plt.plot(x_plot_lin,G(x_plot_lin,a,mu,sigma,bck), color="purple",alpha=0)
-        # Nonexistent Gausian helps with centering 
-        
-        plt.xlim((cen_line[i]-a_width-buff_width-bckrnd_width-1),(cen_line[i]+a_width+buff_width+bckrnd_width+2))
-        plt.xlabel("X pixels")
-        plt.ylabel("Counts (e-)")
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Data_"+str(scinum), exist_ok=True) # Initalizes a dircetory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"E20Data_"+str(scinum)+"/EData"+str(i)+".png")
-    
+    grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
     
     # Now set down an aparature and get the flux
     # in the center and another aperture to get the background level
@@ -523,25 +458,16 @@ if skip_red == False:
         # Recall that we need to scale for the amount of "Sky" that is technically within our aperture size
     
     # Plot output raw flux (We can remove CRs later)
-    plt.cla()
-    y_pix = np.arange(0,len(flux_raw1),1)
-    plt.scatter(y_pix,flux_raw1, s=1)
-    plt.xlabel("Y Pixel")
-    plt.ylabel("Background subtracted Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_bsub_"+str(scinum)+".png", dpi=300)
-    #plt.show()
+    grapher.plot_raw_flux(flux_raw1, target_dir, scinum)
     
     # Now we need to calibrate our flux to wavelength
     pixc = [250,295,765,925,953,1275,1330,1396,1480,2870,3355,3421,3612,3780]
     lam = [6416.31,6384.72,6032.13,5912.09,5888.58,5650.70,5606.73,5558.70,5495.87,4510.73,4200.67,4158.59,4044.42,3948.97]
     
-    # Get argon spectra
-    arg_num = int(argnum)
-    
-    if arg_num > 9:
-        argon = np.asarray(CCDData.read(str(dloc)+"k.00"+str(arg_num)+".fits", unit = "adu").data)
+    if argnum > 9:
+        argon = np.asarray(CCDData.read(str(dloc)+"k.00"+str(argnum)+".fits", unit = "adu").data)
     else:
-        argon = np.asarray(CCDData.read(str(dloc)+"k.0"+str(arg_num)+".fits", unit = "adu").data)
+        argon = np.asarray(CCDData.read(str(dloc)+"k.0"+str(argnum)+".fits", unit = "adu").data)
     
     
     # Lambda calibration
@@ -617,57 +543,7 @@ if skip_red == False:
         f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
     print("(avg of sig of line fits)")
     with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-        f.write("(avg of sig of line fits)\n")
-    
-    """
-    # Get argon flux if desired
-    n_rows_ar = argon.shape[0]  # This gets the number of rows
-    
-    # Fit parameters to each row
-    argon_fit = np.array([fit_cent_gaussian(argon[i], cen_line[i]) for i in range(n_rows_ar)])
-    
-    x_plot = np.linspace(474-9,495+9,200) # X linspace values to plot with
-    
-    cmap = cm.get_cmap("coolwarm") # Use cool warm colro map
-    norm = Normalize(vmin=0, vmax=len(sci1_fit)-1) # Normalize our row count to 0-1 for color plotting
-    
-    # Now set down an aparature and get the flux from argon
-    # in the center and another aperture to get the background level
-    
-    a_width = 9 # 9 Pixel aperture width
-    buff_width = 2 # Width of the buffer
-    bckrnd_width = 7 # Background width
-    
-    argon_flux_raw1 = [] # Raw, unormalized or lam calibrated flux
-    
-    # Extract spectrum value from each y row
-    for i in range(len(argon_fit)): 
-        a, mu, sigma, bck = argon_fit[i]
-        if np.isnan(a):
-            continue
-        c = cen_line[i]
-        g_func = lambda x: G(x,a,mu,sigma,c) # Quad wont run G normally
-        c_flux, _ = quad(g_func,c-a_width, c+a_width) # Center app flux
-        bkg_right, _ = quad(g_func,(c-(a_width+buff_width+bckrnd_width)),(c-a_width))
-        bkg_left, _ = quad(g_func,(c-(a_width+buff_width+bckrnd_width)),(c-a_width))
-        # Append flux_raw with our flux for each row
-        argon_flux_raw1.append(c_flux-((a_width/(2*bckrnd_width))*(bkg_right+bkg_right)))    
-    
-    
-    
-    
-    # Plot output argon raw flux if desired
-    y_pix = np.arange(0,len(argon_flux_raw1),1)
-    fig, ax1 = plt.subplots(1, 1, figsize=(8,6))
-    ax1.scatter(y_pix,argon_flux_raw1, s=1)
-    for i in range(len(cfits)):
-        ax1.axvline(x=cfits[i])
-    plt.xlabel("Y Pixel")
-    plt.ylabel("Background subtracted Flux")
-    plt.savefig("Sci1_Flux_ARlines.png", dpi=300)
-    #plt.show()
-    """
-    
+        f.write("(avg of sig of line fits)\n")    
     
     # Fit a cubic poly nomial with cfits (actual line centers)
     # Fitting c fits (actual line centers in pixels) to lam_fit_linenum (successfully fit line wavelength values from lam)
@@ -723,26 +599,9 @@ if skip_red == False:
         # Vectorize array
         y = np.array(y)
         # Wavelength as a function of pixel with helocentric velocity correction
-        return ((a*(y/2000)**3)+(b*(y/2000)**2)+c*(y/2000)+d)*(1+(v_helio/(3*10**5)))
+        return ((a*(y/2000)**3)+(b*(y/2000)**2)+c*(y/2000)+d)*(1+(v_helio/(3*10**5)))    
     
-    
-    #for i in range(len(y_pix)):
-    #   print("High y_pix:",y_pix[i])
-    #   print("High y_lam(y_pix[i]):",y_lam(y_pix[i]))
-    
-    
-    
-    fig, ax2 = plt.subplots(1, 1, figsize=(8,6))
-    ax2.scatter(y_lam(y_pix),flux_raw_cor1, s=1)
-    ax2.axvline(x=6562.81,color='red')
-    ax2.axvline(x=4861.35,color='cyan')
-    ax2.axvline(x=4340.47,color='blueviolet')
-    plt.xlabel("Wavelength (A)")
-    plt.ylabel("Background subtracted Flux (Electrons)")
-    plt.ylim(0,30000)
-    plt.title("Sci Image"+str(scinum))
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_LamCal_"+str(scinum)+".png", dpi=300)
-    #plt.show()
+    grapher.plot_sci_lamcal(y_lam, y_pix, flux_raw_cor1, target_dir, scinum)
     
     print("Calculating RMS A")
 
@@ -800,13 +659,7 @@ if skip_red == False:
         f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
         f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
     
-    plt.cla() # Clear plt to prevent over plotting
-    fig, axE = plt.subplots(1, 1, figsize=(8,6))
-    axE.scatter(y_lam(y_pix),flux_raw_cor1, s=1)
-    axE.scatter(y_lam(y_pix),rnErr, s=1,color='red')
-    axE.set_xlabel("Wavelength (A), Error (10x)")
-    axE.set_ylabel("Background subtracted Flux (Electrons)")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_LamCal_Res_"+str(scinum)+".png", dpi=300)   
+    grapher.plot_sci_lamcal_res(y_lam, y_pix, flux_raw_cor1, rnErr, target_dir, scinum)
     
     # Print dispersion, as (number of angstroms we go over/number of pixels (4096))
     # Recall that our lam is fit inverse of our pixels, ie 246 pix = 6000 Angstroms
@@ -923,15 +776,6 @@ if comb_spec == False:
             removed_index.append(1) # The index values of the pixels that we remove for fitting later
             lam_remove.append(wavelengths[i])
     
-    plt.cla() # Clear plt to prevent over plotting
-    fig, axE = plt.subplots(1, 1, figsize=(8,6))
-    axE.scatter(lam_red,flux_mask_red, s=1, color="green")
-    axE.scatter(lam_remove,flux_mask_remove, s=1, color="red")
-    axE.set_xlim(3750,4000)
-    axE.set_xlabel("Wavelength (A)")
-    axE.set_ylabel("Background subtracted Flux (Electrons)")
-    
-    
     # Fit a continuum to out spectra:
     aa,bb,cc,dd,ee,ff,gg = np.polyfit(lam_red,flux_mask_red,6)    
     #print(aa,bb,cc,dd,ee) # As a*x^4+bx^3+c*x^2+d*x+e = flux_masked
@@ -943,32 +787,18 @@ if comb_spec == False:
         # flux as a function of wavelength
         return (aa*(wave)**6)+(bb*(wave)**5)+(cc*wave**4)+(dd*wave**3)+(ee*wave**2)+(ff*wave)+gg
     
-    
     con_lam_test = []
-    
     for i in range(len(wavelengths)):
         con_lam_test.append(con_lam(wavelengths[i]))
         
-    axE.scatter(wavelengths,con_lam_test, s=1, color="black")
-    # 6 Zoomed in sci_flux_masked plots
-    for i in range(0,3000,500):
-        axE.set_xlim((3700+i),(4200+i))
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_Masked_All_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/Sci_Flux_Masked_All_"+str(scinum)+"/Sci_Flux_Masked_All_i"+str(scinum)+"_"+str(i)+".png", dpi=300)   
-    
+    grapher.plot_sci_flux_masked(lam_red, lam_remove, flux_mask_red, flux_mask_remove, wavelengths, con_lam_test, target_dir, scinum)
     
     Fnorm_Es = [] # Estimated normalized flux
     for i in range(len(flux_raw_cor1)):
         Fnorm_Es.append(float(flux_raw_cor1[i]/(con_lam(wavelengths[i])))) # Divide raw flux by our continuum that we just fit
     
     # Plot our first estimate on the normalized flux
-    plt.cla()
-    fig, axCont = plt.subplots(1, 1, figsize=(8,6))
-    axCont.scatter(wavelengths,Fnorm_Es, s=1,color="green")
-    axCont.set_xlabel("Wavelength (A)")
-    axCont.set_ylabel("Estimate Cont. Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_NormEst_"+str(scinum)+".png", dpi=300)   
-    
+    grapher.plot_sci_flux_norm_est(wavelengths, Fnorm_Es, target_dir, scinum)
     
     print("Line-fit normilization")
     wavelengths = np.array(wavelengths)
@@ -993,7 +823,6 @@ if comb_spec == False:
     lam_removea = [] # Removed flux values that do not have Fnorm_es > 1.3
     flux_mask_removea = []
     
-    plt.cla()
     # Precompute NaN masks for spectral features
     for i in range(len(wavelengths)):
         #if Fnorm_Es[i] >= 1.3:
@@ -1019,29 +848,10 @@ if comb_spec == False:
                         flux_values_cor.append(flux_values[array[k] - lam_left])  # Align flux_values index, as flux starts at 0
                         
                 if len(wave_range_cor) >= 2: # Check if we have enough points to fit
-                    """
-                    for k in range(len(wave_range_cor)): # Since the continum fit is so poor in the noisy areas
-                        # scinumply remove outlier values from our wave ranges when we do fitting
-                        # Good continum fits shouldn't have this problem, and won't activate this section of code
-                        if float(wave_range_cor[k]) >= 1.3*np.mean(wave_range_cor):
-                            print("Found: wave_range_cor[k] >= 1.3*np.mean(wave_range_cor)")
-                            wave_range_cor[k] = np.mean(wave_range_cor)
-                            print("Replaced with:",np.mean(wave_range_cor))
-                    """
                     # Use poly fit to fit a line to the corrected flux values as a funtion of wavelength
                     ml, bl = np.polyfit(wave_range_cor, flux_values_cor, 1)
                     # Now get the fit value of the continum at that wavelength
-                    fitted_values.append(ml * wavelengths[i] + bl)
-                    """
-                    if 4100 <= wavelengths[i] <= 4200:
-                        #print("Fnorm_Es[i]:",Fnorm_Es[i])
-                        #plt.scatter(wave_range_cor, flux_values_cor, color = "green")
-                        for l in range(len(wave_range_cor)):
-                            plt.scatter(wave_range_cor[l], flux_values_cor[l], color = "red", s=2, alpha=0.2)
-                            plt.scatter(wave_range_cor[l], ml * wave_range_cor[l] + bl, color = "black", s=2, alpha=0.1)    
-                        plt.scatter(wavelengths[i],ml*wavelengths[i]+bl, color = "blue", s=6)
-                    """
-                        
+                    fitted_values.append(ml * wavelengths[i] + bl)                        
                 else:
                     continue  # Skip if not enough good values to fit
                     
@@ -1075,40 +885,11 @@ if comb_spec == False:
                 flux_mask_removea.append(flux_raw_cor1[i])
                 lam_removea.append(wavelengths[i])
 
-    plt.xlim(4100,4200)    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LineFitPlots.png", dpi=300)
     # Now smooth this fit with a moving boxcar
     smooth_cont = uniform_filter(np.array(fitted_values), size=norm_line_boxcar)
     
     # Plot fitted flux values from the line fit to see what is going on
-    plt.cla()
-    fig, axL = plt.subplots(1, 1, figsize=(8,6))
-    axL.scatter(fitted_wavelengths,smooth_cont, s=1,color="blue")
-    axL.scatter(fitted_wavelengths,fitted_values, s=0.9,color="green")
-    
-    axL.scatter(fitted_wavelengths,fitted_fluxes, s=0.1,color="black")
-    axL.scatter(lam_removea,flux_mask_removea,s=0.1,color="red")
-    axL.set_xlabel("Wavelength (A)")
-    axL.set_ylabel("Fitted Values over Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFlux_"+str(scinum)+".png", dpi=300)   
-    
-    # Maybe overplot the before and after continums, with and without the removed points to see how much,
-    # if at all the points are affecting the continum fit?
-    
-    # 4 evenly spaced plots of the fitted values, the raw, origonal fluxes, and the smoothed fitted values
-    for i in range(3700,6700,500):
-        plt.cla()
-        axL.scatter(lam_red,flux_mask_red, s=0.5, color="blue") # Non absorption features flux values Fnorm_es < 1.3
-        axL.scatter(lam_remove,flux_mask_remove, s=0.5, color="magenta") # Absoprtion features flux values Fnorm_es < 1.3
-        axL.scatter(lam_reda,flux_mask_reda, s=0.5, color="green") # All Non absorption features flux values 
-        axL.scatter(lam_removea,flux_mask_removea, s=0.5, color="red") # All Absoprtion features flux values
-        axL.scatter(fitted_wavelengths,smooth_cont, s=1,color="black") # Continum flux
-        axL.set_xlabel("Wavelength (A)")
-        axL.set_ylabel("Fitted Values over Flux")
-        axL.set_xlim((i),(i+1000))
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum)+"/FitOverFlux_iter_"+str(scinum)+"_"+str(i)+".png", dpi=300)   
-    
+    grapher.plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, target_dir, scinum)
     
     Fnorm = [] # Normalized flux
     for i in range(len(fitted_fluxes)):
@@ -1119,7 +900,6 @@ if comb_spec == False:
             print("Found Fnorm >= 1.3:", Fnorm[i])
             Fnorm[i] = 1
     
-    
     print("Plotting Normalized Spectra")
     # Plot our finalized normalized flux
     
@@ -1127,34 +907,7 @@ if comb_spec == False:
     for i in range(len(fitted_fluxes)):
         sf_sm.append(float(fitted_fluxes[i]+fitted_sky[i])**(1/2)/smooth_cont[i]) 
     
-    plt.cla()
-    fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
-    axNorm.scatter(fitted_wavelengths,Fnorm, s=1,color="black")
-    axNorm.scatter(fitted_wavelengths,sf_sm, s=0.5,color="red")
-    axNorm.axhline(1,color="red",linestyle="--")
-    axNorm.set_xlabel("Wavelength (A)")
-    axNorm.set_ylabel("Normalized Flux")
-    axNorm.set_title("Normalized Spectra for "+str(objid)+" Image:"+str(scinum))
-    axNorm.set_ylim(0,1.5)
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_"+str(scinum)+".png", dpi=300)   
-    
-    # Some other diagnostic plots
-    plt.cla()
-    fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
-    axNorm.scatter(fitted_wavelengths[3000:4096],Fnorm[3000:4096], s=1,color="black")
-    axNorm.set_xlim(3760,4400)
-    axNorm.axhline(1,color="red",linestyle="--")
-    axNorm.set_xlabel("Wavelength (A)")
-    axNorm.set_ylabel("Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_Left"+str(scinum)+".png", dpi=300)   
-    
-    
-    plt.cla()
-    fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
-    axNorm.scatter(fitted_wavelengths[2700:3300],Fnorm[2700:3300], s=1,color="black")
-    axNorm.set_xlabel("Wavelength (A)")
-    axNorm.set_ylabel("Normalized Flux")
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_hbeta"+str(scinum)+".png", dpi=300)   
+    grapher.plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, scinum)
     
     # Write a file for the spectra of this sci image
     # In the form G123456_61_OUT.fits in the OUT folder
@@ -1207,13 +960,6 @@ if comb_spec == True:
         if med_comb[i] > 1.25:
             med_comb[i] = 1
                 
-    plt.cla()
-    fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
-    axNorm.scatter(gwave,med_comb, s=0.8,color="black")
-    axNorm.axhline(1,color="red",linestyle="--")
-    axNorm.set_xlabel("Wavelength (A)")
-    axNorm.set_ylabel("Median Normalized Flux")
-    axNorm.set_ylim(-0.1,1.5)
     print("Computing RMS")
     # Compute the RMS across 5450-5550 of the median combined spectra
     one_minus_med = []
@@ -1252,9 +998,6 @@ if comb_spec == True:
     with open(str(target_dir)+"OUT/KARP_OUT_log.txt", "a") as fo:
         fo.write("(RMS/sig_w55)"+str(RMS/sig_w55)+"\n")
     
-    axNorm.scatter(gwave,sig_final, s=0.3,color="red")
-    axNorm.set_title("Median Normalized Spectra for "+str(objid)+", SNR 5500 A:"+str(np.round(1/RMS, decimals=2)))
-    
     # Over plot Max's spectra for G093440
     # Remember to comment out later
     
@@ -1271,15 +1014,7 @@ if comb_spec == True:
         eout.append(float(splitm[2])) # error
     max1.close()
     
-    axNorm.scatter(wout,fout,s=0.6,color="green")
-    axNorm.scatter(wout,eout,s=0.3,color="blue")
-    
-    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT.png", dpi=300)
-    
-    for i in range(0,4000,40):
-        axNorm.set_xlim((3200+i),(3700+i))
-        plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT_Zoom"+str(i)+".png", dpi=300)
-
+    grapher.plot_combined_norm(gwave, med_comb, sig_final, wout, fout, eout, RMS, target_dir, objid)
 
 #------------------------------------
 
@@ -1379,7 +1114,6 @@ if comb_spec == True:
         #create csv of data output
         metal_results.append([line, equi_width, ew_sum, error, sys, (equi_width + ew_sum) / 2, adopt_err, metal_mask[i]])
         
-        #print("Model fits", popt)
         print("------------------")
         print(f"Metal line at {line}")
         print(f"EW_g is {equi_width:.4f} and EW is {ew_sum:.4f}")
@@ -1397,45 +1131,26 @@ if comb_spec == True:
     print(f"Metal line results written to {csv_path}")
 
     #make graphs of fits around lines
-    grapher.metal_line_plt(metal_fit, gwave, med_comb, metal_lines, target_dir)
+    grapher.metal_line_plt(metal_fit, gwave, mask, med_comb, metal_lines, target_dir)
     
     #make big plot of all metal lines
     grapher.metal_line_big_plt(metal_fit, metal_lines, metal_mask, gwave, med_comb, target_dir, objid)
     print(f"Big summary plot saved to {str(target_dir)}OUT/{objid}_metal_lines_all.png")
 
 #--------------------------------------------------------
+#finishing tasks
             
 # Duration_run is how long KARP took to run
 duration_run = timedelta(seconds=time.perf_counter()-starttime)
 with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
     f.write("KARP took:"+str(duration_run)+" to run\n")
     f.write("><(((º>")
-    
 
-# Initialize mixer
-pygame.mixer.init(frequency=44100, size=-16, channels=1)
-
-# Generate sine wave
-duration = 0.07 # seconds
-freq = 777  # Hz
-freq1 = 600
-sample_rate = 44100
-t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-waveform = np.sin(2 * np.pi * freq * t)
-waveform1 = np.sin(2 * np.pi * freq1 * t)
-
-# Convert to 16-bit signed integers
-audio = np.int16(waveform * 32767).tobytes()
-audio1 = np.int16(waveform1 * 32767).tobytes()
-
-# Create sound object and play
-sound = pygame.mixer.Sound(buffer=audio)
-sound1 = pygame.mixer.Sound(buffer=audio1)
+#play finishing sound
 sound.play()
 pygame.time.delay(int(duration * 1000))  # wait for playback to finish
 sound1.play()
 pygame.time.delay(int(duration * 1000))  # wait for playback to finish
-
 
 print("KARP took:",duration_run," to run")
 print("><(((º>")
