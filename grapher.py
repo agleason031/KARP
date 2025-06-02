@@ -14,6 +14,27 @@ def G(x, a, mu, sigma, bck):
 	return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
 	# A 4d Gaussian
 
+#fit individual plots for each metal line
+def metal_line_plt(metal_fits, gwave, med_comb, lines, target_dir):
+	for i, popt in enumerate(metal_fits):
+		plt.cla()
+		fig, ax = plt.subplots(1, 1, figsize=(8,6))
+		ax.scatter(gwave,med_comb, s=5,color="black")
+		ax.plot(gwave,G(gwave,popt[0],popt[1],popt[2], popt[3]))
+		ax.axhline(1,color="red",linestyle="--")
+		ax.axvline(popt[1],color="black",linestyle="--")
+		ax.set_xlim(int(lines[i]-5),int(lines[i]+5))
+		ax.set_xlabel("Wavelength (A)")
+		ax.set_ylabel("Median Normalized Flux")
+		ax.set_title("Metal line fit at "+str(lines[i])+" A")
+		'''
+		#set y scale for each plot
+		ydata = med_comb[mask]
+		ymin = np.nanmin(ydata)
+		ymax = np.nanmax(ydata)
+		yrange = ymax - ymin
+		ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
+		'''
 
 def metal_line_big_plt(metal_fits, metal_lines, metal_mask, gwave, med_comb, target_dir, objid):
     n_lines = len(metal_lines)
@@ -152,4 +173,24 @@ def gauss_cen_plots(sci1_fit, cen_line, target_dir, scinum):
         ax3.set_ylim(0, 2)
         fig3.tight_layout()
         fig3.savefig(os.path.join(save_dir, f"Sci_Gsig_y_ZOOM{scinum}.png"))
+        
+def lam_cal_res(pixc, del_lam, target_dir, scinum):
+    fig, axL = plt.subplots(1, 1, figsize=(8,6))
+    
+    axL.scatter(pixc,del_lam,color="blue")
+    axL.axhline(0,linestyle="--",color="black")
+    axL.set_xlabel("Y Pixel Value")
+    axL.set_ylabel("Angstroms")
+    
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_"+str(scinum)+".png")
+    
+def lam_cal_res_vel(pixc, res_vel, target_dir, scinum):
+    plt.cla()
+    fig, axV = plt.subplots(1, 1, figsize=(8,6))
+    axV.scatter(pixc,res_vel,color="green")
+    axV.axhline(0,linestyle="--",color="black")
+    axV.set_xlabel("Y Pixel Value")
+    axV.set_ylabel("km/s")
+    
+    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_Velocity_"+str(scinum)+".png")
     

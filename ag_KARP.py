@@ -747,7 +747,6 @@ if skip_red == False:
     print("Calculating RMS A")
 
     # Lambda calibration graph
-    fig, axL = plt.subplots(1, 1, figsize=(8,6))
     del_lam = [] # Lam_fit - Lam_cal
     print("len(cfits)",len(cfits))
     print("len(lam):",len(lam))
@@ -760,7 +759,6 @@ if skip_red == False:
             print("NAN here")
         #print(offset[i])
         
-    
     # Put print RMS here
     dlS = []
     for i in range(len(del_lam)):
@@ -773,21 +771,11 @@ if skip_red == False:
     for i in range(len(del_lam)):
         dlols.append(float(del_lam[i]/lam[i])**2)
     
-    
     print("RMS km/s:",np.sqrt(np.mean(dlols))*3*10**5)
     with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("RMS km/s:"+str(np.sqrt(np.mean(dlols))*3*10**5)+"\n")
-    
     # Should be ~10 km/s 0.1 A or even 0.05 A
-    
-    for i in range(len(sci1_fit)):
-        axL.scatter(pixc,del_lam,color="blue")
-        axL.axhline(0,linestyle="--",color="black")
-        axL.set_xlabel("Y Pixel Value")
-        axL.set_ylabel("Angstroms")
-    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_"+str(scinum)+".png")
-    
+
     # Print RMS in A, and in velocity
     # and plot counts vs error
     rnErr = []
@@ -801,28 +789,16 @@ if skip_red == False:
     
     for i in range(len(flux_raw_cor1)): # For our corrected fluxes
         rnErr.append(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))
-    
-    plt.cla()
-    fig, axV = plt.subplots(1, 1, figsize=(8,6))
-    for i in range(len(sci1_fit)):
-        axV.scatter(pixc,res_vel,color="green")
-        axV.axhline(0,linestyle="--",color="black")
-        axV.set_xlabel("Y Pixel Value")
-        axV.set_ylabel("km/s")
-        
-    
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"LamCalRes_Velocity_"+str(scinum)+".png")
-    
-    
+
+    #make lamcalres plots
+    grapher.lam_cal_res(pixc, del_lam, target_dir, scinum)
+    grapher.lam_cal_res_vel(pixc, res_vel, target_dir, scinum)
+
     print("Mean Wavelength residual (delLAM):",np.mean(del_lam))
     print("Mean Velocity residual (delVEL):",np.mean(res_vel))
     with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
         f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
         f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
-    
-        
-    
-    
     
     plt.cla() # Clear plt to prevent over plotting
     fig, axE = plt.subplots(1, 1, figsize=(8,6))
