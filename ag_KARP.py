@@ -60,8 +60,8 @@ sound1 = pygame.mixer.Sound(buffer=audio1)
 #function definitions
 
 def run_fit(args):
-    row, clr, a_width, buff_width, bckrnd_width = args
-    return functions.fit_cent_gaussian(row, clr, a_width, buff_width, bckrnd_width)
+    row, clr, appw, buff_width, bckrnd_width = args
+    return functions.fit_cent_gaussian(row, clr, appw, buff_width, bckrnd_width)
 
 def nan_aware_smooth(arr, window=100):
     """
@@ -203,60 +203,17 @@ if __name__ == "__main__":
         blist = [format_fits_filename(dloc, b) for b in bim]
         flist = [format_fits_filename(dloc, f) for f in fim]
         sci_list = [format_fits_filename(dloc, s) for s in sim]
-        
-        # Make a master bias from the input bias image
-        print("Making Master Bias")
-        masterbias = ccdproc.combine(blist, method='median', unit='adu',sigma_clip=True, sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,sigma_clip_func=np.ma.median, sigma_clip_dev_func=mad_std,mem_limit=350e6)
-        
-        # Make a master flat from the flat images
-        print("Making Master Flat")
-        masterflat = ccdproc.combine(flist, method='median', unit='adu',sigma_clip=False,mem_limit=350e6)
-      
-        # Subtract Master Bias from Master Flat
-        masterflatDEbias = ccdproc.subtract_bias(masterflat,masterbias)
-        
-        # Smooth master flatdebias:
-        np_mfdb = np.asarray(masterflatDEbias) # Convert to a numpy array        
-        smooth_mf_mb = uniform_filter(np_mfdb, size=5)
-        
-        # Make a Final Flat by dividing mf_mb by smooth_mf_mb
-        final_flat = np_mfdb/smooth_mf_mb
-        # Y top of 0th order line 2025ish
-        # Y bottom of 0th order line 1995ish
-        # Go ten pixels on either side
-        # X=165-835
-        xZo = np.arange(165,835,1)
-        yZo = np.arange(1985,2035,1)
-        
-        # Remove zeorth orther line
-        for i in range(len(xZo)):
-            for k in range(len(yZo)):
-                final_flat[yZo[k], xZo[i]] = 1
-          
-        # Remove other bad features
-        xOther1 = np.arange(165,835,1)
-        yOther1 = np.arange(2074,2083,1)
-        
-        xOther2 = np.arange(165,835,1)
-        yOther2 = np.arange(2048,2057,1)
-        
-        for i in range(len(xOther1)):
-            for k in range(len(yOther1)):
-                final_flat[yOther1[k], xOther1[i]] = 1 # Set the flat value of these small areas to 1
-                # Note that this minimally affects the final flat as these areas are relativly small
-                # So we still get a representative final flat image
-        
-        for i in range(len(xOther1)):
-            for k in range(len(yOther1)):
-                final_flat[yOther1[k], xOther1[i]] = 1
-        
+    
+        masterbias, final_flat = sci_tools.get_cal_images(blist, flist)
         print("Final Flat Made")
+        final_flat_write = CCDData(final_flat, unit="adu")
+        final_flat_write.write(str(target_dir)+"OUT/"+str(objid)+"_final_flat.fits", overwrite = True)
         
         if (verbose == True):
             grapher.plot_masterbias(masterbias, target_dir, objid)
-            grapher.plot_masterflat(masterflat, target_dir, objid)
-            grapher.plot_masterflatDEbias(masterflatDEbias, target_dir, objid)
-            grapher.plot_smooth_mf_mb(smooth_mf_mb, target_dir, objid)
+            #grapher.plot_masterflat(masterflat, target_dir, objid)
+            #grapher.plot_masterflatDEbias(masterflatDEbias, target_dir, objid)
+            #grapher.plot_smooth_mf_mb(smooth_mf_mb, target_dir, objid)
             grapher.plot_final_flat(final_flat, target_dir, objid)
         
         #individual image processing
@@ -281,6 +238,8 @@ if __name__ == "__main__":
             sci_final = (ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat
             if (verbose == True):
                 grapher.plot_sci_final(sci_final, target_dir, scinum, objid)
+            sci_final_write = CCDData(sci_final, unit="adu")
+            sci_final_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
             
             # Read all three of our final sci images and convert to nparrays
             sci_final_1 = np.asarray(CCDData.read(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", unit = "adu").data)
@@ -288,8 +247,6 @@ if __name__ == "__main__":
             # Convert from ADU to electrons
             sci_final_1 = sci_final_1*0.6
             
-            # Shape of sci images is 4096, 1124
-            a_width = int(appw) # Pixel aperture width
             buff_width = int(buffw) # Width of the buffer
             bckrnd_width = int(bckw) # Background width
             
@@ -309,7 +266,7 @@ if __name__ == "__main__":
             print("KARP fitting centerline")
             
             # Fit and collect results in a list (each entry is a tuple: a, mu, sig, bck)
-            args_list = [(row, cen_line[i], a_width, buff_width, bckrnd_width)
+            args_list = [(row, cen_line[i], appw, buff_width, bckrnd_width)
                      for i, row in enumerate(sci_final_1)]
             with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
                 cen_fit = list(tqdm(executor.map(run_fit, args_list), total=len(args_list)))
@@ -372,7 +329,7 @@ if __name__ == "__main__":
                     cen_line[i] = int(clmax)
                 if cen_line[i] < clmin:
                     cen_line[i] = int(clmin)
-        
+    6
             # cen_line is now cleaned, smoothed, and robust to fitting artifacts
             cen_line = np.sort(cen_line) # Doesn't change the number of cen_line pixels, just sorts outliers
             grapher.plot_cen_line(cen_line, target_dir, scinum)
@@ -381,7 +338,7 @@ if __name__ == "__main__":
 #flux extraction
             
             # Fit parameters to each row, need new fit after cleaned cen_line
-            args_list = [(row, cen_line[i], a_width, buff_width, bckrnd_width)
+            args_list = [(row, cen_line[i], appw, buff_width, bckrnd_width)
                      for i, row in enumerate(sci_final_1)]
             with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
                 sci1_fit = list(tqdm(executor.map(run_fit, args_list), total=len(args_list)))
@@ -409,8 +366,8 @@ if __name__ == "__main__":
             
             if (verbose == True):
                 print("Making 20 aperture plots and aperature fit plots")
-                grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
-                grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
+                grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, appw, buff_width, bckrnd_width, target_dir, scinum)
+                grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, appw, buff_width, bckrnd_width, target_dir, scinum)
                 
             # Now set down an aparature and get the flux
             # in the center and another aperture to get the background level
@@ -426,13 +383,13 @@ if __name__ == "__main__":
                     continue
                 c = cen_line[i]
                 g_func = lambda x: functions.G(x,a,mu,sigma,bck) # quad() requires a function; lambda used to wrap G
-                c_flux, _ = quad(g_func,c-a_width, c+a_width) # Center app flux
-                bkg_right, _ = quad(g_func,(c-(a_width+buff_width+bckrnd_width)),(c-a_width))
-                bkg_left, _ = quad(g_func,(c-(a_width+buff_width+bckrnd_width)),(c-a_width))
+                c_flux, _ = quad(g_func,c-appw, c+appw) # Center app flux
+                bkg_right, _ = quad(g_func,(c-(appw+buff_width+bckrnd_width)),(c-appw))
+                bkg_left, _ = quad(g_func,(c-(appw+buff_width+bckrnd_width)),(c-appw))
                 # Append flux_raw with our flux for each row
-                flux_raw1.append(c_flux-((a_width/(2*bckrnd_width))*(bkg_right+bkg_right)))    
+                flux_raw1.append(c_flux-((appw/(2*bckrnd_width))*(bkg_right+bkg_right)))    
                 inrow = sci_final_1[i]
-                sky_raw1.append(float(a_width/bckrnd_width)*(np.sum(inrow[(c-a_width-buff_width-bckrnd_width):(c-a_width-buff_width)])+np.sum(inrow[(c+a_width+buff_width+bckrnd_width):(c+a_width+buff_width)]))) # Sum up both sides of the background
+                sky_raw1.append(float(appw/bckrnd_width)*(np.sum(inrow[(c-appw-buff_width-bckrnd_width):(c-appw-buff_width)])+np.sum(inrow[(c+appw+buff_width+bckrnd_width):(c+appw+buff_width)]))) # Sum up both sides of the background
                 # Recall that we need to scale for the amount of "Sky" that is technically within our aperture size
             
             if (verbose == True):
@@ -500,12 +457,12 @@ if __name__ == "__main__":
             cfits = [] # Empty array for putting the fitted line centers
             for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
                 cfits.append(lam_fit[i][1])
-                
-            print("Argon Lines Fit Parameters:")
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Argon Lines Fit Parameters:\n")
             
             if (verbose == True):
+                print("Argon Lines Fit Parameters:")
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("Argon Lines Fit Parameters:\n")
+                
                 s_lsp = [] # Sigmas of the lam line fits for the line split function
                 for i in range(len(lam_fit)):
                     a, mu, sigma, bck = lam_fit[i]
@@ -741,7 +698,8 @@ if __name__ == "__main__":
                 Fnorm_Es.append(float(flux_raw_cor1[i]/(functions.con_lam(wavelengths[i], fit_params)))) # Divide raw flux by our continuum that we just fit
             
             # Plot our first estimate on the normalized flux
-            grapher.plot_sci_flux_norm_est(wavelengths, Fnorm_Es, target_dir, scinum)
+            if (verbose == True):
+                grapher.plot_sci_flux_norm_est(wavelengths, Fnorm_Es, target_dir, scinum)
             
             print("Line-fit normilization")
             wavelengths = np.array(wavelengths)
@@ -840,17 +798,16 @@ if __name__ == "__main__":
             
             for i in range(len(Fnorm)):
                 if Fnorm[i] >= 1.3:
-                    print("Found Fnorm >= 1.3:", Fnorm[i])
+                    if (verbose == True):
+                        print("Found Fnorm >= 1.3:", Fnorm[i])
                     Fnorm[i] = 1
-            
-            print("Plotting Normalized Spectra")
-            # Plot our finalized normalized flux
             
             sf_sm = [] # sqrt(sky+flux)/smooth_fit
             for i in range(len(fitted_fluxes)):
                 sf_sm.append(float(fitted_fluxes[i]+fitted_sky[i])**(1/2)/smooth_cont[i]) 
             
             if (verbose == True):
+                print("Plotting Normalized Spectra")
                 grapher.plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, scinum)
             
             # Write a file for the spectra of this sci image

@@ -141,8 +141,6 @@ def plot_final_flat(final_flat, target_dir, objid):
     plt.colorbar()
     plt.title('Final Flat')
     plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_final_flat.png")
-    final_flat_write = CCDData(final_flat, unit="adu")
-    final_flat_write.write(str(target_dir)+"OUT/"+str(objid)+"_final_flat.fits", overwrite = True)
     
 def plot_sci_final(sci_final, target_dir, scinum, objid):
     plt.clf()
@@ -151,8 +149,6 @@ def plot_sci_final(sci_final, target_dir, scinum, objid):
     plt.title('Final Science ' + str(scinum))
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_sci" + str(scinum)+".png")
     print("Master Science Number: " + str(scinum) + " Made")
-    sci_final_write = CCDData(sci_final, unit="adu")
-    sci_final_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
     
 def gauss_cen_plots(sci1_fit, cen_line, target_dir, scinum):
 
@@ -223,7 +219,7 @@ def plot_cen_line(cen_line, target_dir, scinum):
     axcs.set_xlabel("Y Pixel")
     axcs.set_ylabel("X Pixel")
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"cen_line_"+str(scinum)+".png")
-    print("len(cen_line)",len(cen_line))
+    #print("len(cen_line)",len(cen_line))
     
 def make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum):
     # Prepare save directory once
