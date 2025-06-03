@@ -24,10 +24,10 @@ def heliocentric_correction(objRA, objDEC, otime):
     t =  Time(otime)
     sc = SkyCoord(coord, unit=(u.hourangle, u.deg)) # Make a SkyCoord Object for our star
     heliocorr = sc.radial_velocity_correction('heliocentric', obstime=t, location=site) # Heliocentric radial velocity correction
-    print("heliocorr",heliocorr)
+    #print("heliocorr",heliocorr)
     # Map to v_helio
     correction = heliocorr.to(u.km/u.s)
-    print("correction",correction)
+    #print("correction",correction)
     correction = str(correction)
     correction = correction.replace('km / s', '')
     return(float(correction))

@@ -5,11 +5,16 @@ aux grapher module for KARP
 '''
 
 #import packages
-from functions import G
 from astropy.nddata import CCDData
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+
+# Define a Gaussian
+#different from functions.G bc no njit
+def G(x, a, mu, sigma, bck):
+	return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
+	# A 4d Gaussian
 
 #fit individual plots for each metal line
 def metal_line_plt(metal_fits, gwave, mask, med_comb, lines, target_dir):
@@ -354,7 +359,7 @@ def plot_sci_flux_norm_est(wavelengths, Fnorm_Es, target_dir, scinum):
     axCont.set_ylabel("Estimate Cont. Normalized Flux")
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Flux_NormEst_"+str(scinum)+".png", dpi=300)   
 
-def plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, target_dir, scinum):
+def plot_fit_over_flux(verbose, fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, target_dir, scinum):
     plt.cla()
     fig, axL = plt.subplots(1, 1, figsize=(8,6))
     axL.scatter(fitted_wavelengths,smooth_cont, s=1,color="blue")
@@ -367,18 +372,19 @@ def plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fl
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFlux_"+str(scinum)+".png", dpi=300)   
     
     # 4 evenly spaced plots of the fitted values, the raw, origonal fluxes, and the smoothed fitted values
-    for i in range(3700,6700,500):
-        plt.cla()
-        axL.scatter(lam_red,flux_mask_red, s=0.5, color="blue") # Non absorption features flux values Fnorm_es < 1.3
-        axL.scatter(lam_remove,flux_mask_remove, s=0.5, color="magenta") # Absoprtion features flux values Fnorm_es < 1.3
-        axL.scatter(lam_reda,flux_mask_reda, s=0.5, color="green") # All Non absorption features flux values 
-        axL.scatter(lam_removea,flux_mask_removea, s=0.5, color="red") # All Absoprtion features flux values
-        axL.scatter(fitted_wavelengths,smooth_cont, s=1,color="black") # Continum flux
-        axL.set_xlabel("Wavelength (A)")
-        axL.set_ylabel("Fitted Values over Flux")
-        axL.set_xlim((i),(i+1000))
-        os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
-        plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum)+"/FitOverFlux_iter_"+str(scinum)+"_"+str(i)+".png", dpi=300)   
+    if (verbose == True):
+        for i in range(3700,6700,500):
+            plt.cla()
+            axL.scatter(lam_red,flux_mask_red, s=0.5, color="blue") # Non absorption features flux values Fnorm_es < 1.3
+            axL.scatter(lam_remove,flux_mask_remove, s=0.5, color="magenta") # Absoprtion features flux values Fnorm_es < 1.3
+            axL.scatter(lam_reda,flux_mask_reda, s=0.5, color="green") # All Non absorption features flux values 
+            axL.scatter(lam_removea,flux_mask_removea, s=0.5, color="red") # All Absoprtion features flux values
+            axL.scatter(fitted_wavelengths,smooth_cont, s=1,color="black") # Continum flux
+            axL.set_xlabel("Wavelength (A)")
+            axL.set_ylabel("Fitted Values over Flux")
+            axL.set_xlim((i),(i+1000))
+            os.makedirs(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum), exist_ok=True) # Initializes a directory for E20 files
+            plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"FitOverFluxZoom_"+str(scinum)+"/FitOverFlux_iter_"+str(scinum)+"_"+str(i)+".png", dpi=300)   
     
 def plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, scinum):
     plt.cla()
@@ -410,7 +416,7 @@ def plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, sci
     axNorm.set_ylabel("Normalized Flux")
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_hbeta"+str(scinum)+".png", dpi=300)   
 
-def plot_combined_norm(gwave, med_comb, sig_final, RMS, target_dir, objid):
+def plot_combined_norm(verbose, gwave, med_comb, sig_final, RMS, target_dir, objid):
     plt.cla()
     fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
     axNorm.scatter(gwave,med_comb, s=0.8,color="black")
@@ -424,6 +430,7 @@ def plot_combined_norm(gwave, med_comb, sig_final, RMS, target_dir, objid):
     
     plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT.png", dpi=300)
     
-    for i in range(0,2600,40):
-        axNorm.set_xlim((3700+i),(4200+i))
-        plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT_Zoom"+str(i)+".png", dpi=300)
+    if (verbose == True):
+        for i in range(0,2600,40):
+            axNorm.set_xlim((3700+i),(4200+i))
+            plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT_Zoom"+str(i)+".png", dpi=300)

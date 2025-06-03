@@ -171,15 +171,13 @@ if __name__ == "__main__":
     comb_spec = string_to_bool(params["comb_spec"])
     fit_lines = string_to_bool(params["fit_lines"])
     spec_norm = string_to_bool(params["spec_norm"])
+    verbose = string_to_bool(params["verbose"])
     
-    print("KARP has taken the bait! (Input file):")
-    print("------------")
-    print(params) # Print out parameters
-    print("------------")
-    
-    # Target directory should be something like /d/ori1/csmit/metalpoor/RED_G093440
-    # Syntax of target directory is RED_G123456, with RED=reduced
-    # Test input: -data_loc /d/ori1/csmit/metalpoor/Chase_G093440/Chase_G093440/ -sci_im_num 61 -arg_im_num 64 -f_start 1 -f_stop 7 -b_start 9 -b_stop 17 -appw 13 -buffw 2 -bckw 7 -cline_min 479 -cline_max 492 -target_dir /d/ori1/csmit/metalpoor/RED_G093440/
+    if (verbose == True):
+        print("KARP has taken the bait! (Input file):")
+        print("------------")
+        print(params) # Print out parameters
+        print("------------")
     
     if skip_red == False:
         print("KARP is doing reduction!")
@@ -209,21 +207,17 @@ if __name__ == "__main__":
         # Make a master bias from the input bias image
         print("Making Master Bias")
         masterbias = ccdproc.combine(blist, method='median', unit='adu',sigma_clip=True, sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,sigma_clip_func=np.ma.median, sigma_clip_dev_func=mad_std,mem_limit=350e6)
-        grapher.plot_masterbias(masterbias, target_dir, objid)
         
         # Make a master flat from the flat images
         print("Making Master Flat")
-        masterflat = ccdproc.combine(flist,method='median', unit='adu',sigma_clip=False,mem_limit=350e6)
-        grapher.plot_masterflat(masterflat, target_dir, objid)
-        
+        masterflat = ccdproc.combine(flist, method='median', unit='adu',sigma_clip=False,mem_limit=350e6)
+      
         # Subtract Master Bias from Master Flat
         masterflatDEbias = ccdproc.subtract_bias(masterflat,masterbias)
-        grapher.plot_masterflatDEbias(masterflatDEbias, target_dir, objid)
         
         # Smooth master flatdebias:
         np_mfdb = np.asarray(masterflatDEbias) # Convert to a numpy array        
         smooth_mf_mb = uniform_filter(np_mfdb, size=5)
-        grapher.plot_smooth_mf_mb(smooth_mf_mb, target_dir, objid)
         
         # Make a Final Flat by dividing mf_mb by smooth_mf_mb
         final_flat = np_mfdb/smooth_mf_mb
@@ -256,8 +250,14 @@ if __name__ == "__main__":
             for k in range(len(yOther1)):
                 final_flat[yOther1[k], xOther1[i]] = 1
         
-        grapher.plot_final_flat(final_flat, target_dir, objid)
         print("Final Flat Made")
+        
+        if (verbose == True):
+            grapher.plot_masterbias(masterbias, target_dir, objid)
+            grapher.plot_masterflat(masterflat, target_dir, objid)
+            grapher.plot_masterflatDEbias(masterflatDEbias, target_dir, objid)
+            grapher.plot_smooth_mf_mb(smooth_mf_mb, target_dir, objid)
+            grapher.plot_final_flat(final_flat, target_dir, objid)
         
         #individual image processing
         for scinum in sim:
@@ -273,17 +273,14 @@ if __name__ == "__main__":
                 f.write("\n")
                 f.write("KARP is reducing Science Image number:"+str(scinum)+"\n")
                 f.write("KARP has taken the bait! (Input file):\n")
-                f.write("------------\n")
-                f.write(str(params))
-                f.write("------------\n")
-            
-            # Subtract off the bias from each of our science images
-            # Note that we aren't stacking the sci images just yet,
-            # we wait to do that at the end, so we need to do this
-            # for each of our sci images
+                if (verbose == True):
+                    f.write("------------\n")
+                    f.write(str(params))
+                    f.write("------------\n")
             
             sci_final = (ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat
-            grapher.plot_sci_final(sci_final, target_dir, scinum, objid)
+            if (verbose == True):
+                grapher.plot_sci_final(sci_final, target_dir, scinum, objid)
             
             # Read all three of our final sci images and convert to nparrays
             sci_final_1 = np.asarray(CCDData.read(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", unit = "adu").data)
@@ -300,7 +297,6 @@ if __name__ == "__main__":
 #trace fitting
             
             n_rows = sci_final_1.shape[0]  # This gets the number of rows
-            print("n_rows:",n_rows)
             cen_line1 = np.round(np.linspace(int(clmin), int(clmax), n_rows)).astype(int)
             # Note that this repeats each integer 51 times, stretching it to 1124
             
@@ -366,7 +362,8 @@ if __name__ == "__main__":
                 # Condition 1: Implausible high value (usually near image end)
                 # Condition 2: Large deviation from local average
                 if cen_line[i] > cen_line[-1] or abs(cen_line[i] - cmean) > 1.2:
-                    print(f"Outlier at {i}: Replacing {cen_line[i]} with {np.round(cmean)}")
+                    if (verbose == True):
+                        print(f"Outlier at {i}: Replacing {cen_line[i]} with {np.round(cmean)}")
                     cen_line[i] = int(np.round(cmean))     # Replace with smoothed local mean
             
             # For the tails of the image if the fit becomes very poor, bin to the set max values
@@ -390,28 +387,31 @@ if __name__ == "__main__":
                 sci1_fit = list(tqdm(executor.map(run_fit, args_list), total=len(args_list)))
             print("KARP finished fitting flux Gaussians")
             
-            print("10 Flux Fit Parameters:")
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("10 Flux Fit Parameters:"+"\n")
-            for i in range(0,4000,400):
-                a, mu, sigma, bck = sci1_fit[i]
-                print("Y:",i," a:",a," mu:",mu," sig:",sigma," bck:",bck)
+            if (verbose == True):
+                print("10 Flux Fit Parameters:")
                 with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                    f.write("Y:"+str(i)+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
-            
-            # Plot Gaussian center values vs y pix and Gaussian sigma value vs Y pix
-            print("Plotting Gauss cen values and Gauss sig values vs Y pix")
-            grapher.gauss_cen_plots(sci1_fit, cen_line, target_dir, scinum)
+                    f.write("10 Flux Fit Parameters:"+"\n")
+                for i in range(0,4000,400):
+                    a, mu, sigma, bck = sci1_fit[i]
+                    print("Y:",i," a:",a," mu:",mu," sig:",sigma," bck:",bck)
+                    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                        f.write("Y:"+str(i)+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
+                
+            if (verbose == True):
+                # Plot Gaussian center values vs y pix and Gaussian sigma value vs Y pix
+                print("Plotting Gauss cen values and Gauss sig values vs Y pix")
+                grapher.gauss_cen_plots(sci1_fit, cen_line, target_dir, scinum)
             
             cen_line = np.round(cen_line).astype(int)
             # Make a plot of 20 evenly spaced pix
             # Showing the data, the apertures and buffers as lines,
             # And the over plotted G fit
-           
-            print("Making 20 aperture plots and aperature fit plots")
-            grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
-            grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
             
+            if (verbose == True):
+                print("Making 20 aperture plots and aperature fit plots")
+                grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
+                grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, bckrnd_width, target_dir, scinum)
+                
             # Now set down an aparature and get the flux
             # in the center and another aperture to get the background level
             
@@ -435,8 +435,9 @@ if __name__ == "__main__":
                 sky_raw1.append(float(a_width/bckrnd_width)*(np.sum(inrow[(c-a_width-buff_width-bckrnd_width):(c-a_width-buff_width)])+np.sum(inrow[(c+a_width+buff_width+bckrnd_width):(c+a_width+buff_width)]))) # Sum up both sides of the background
                 # Recall that we need to scale for the amount of "Sky" that is technically within our aperture size
             
-            # Plot output raw flux (We can remove CRs later)
-            grapher.plot_raw_flux(flux_raw1, target_dir, scinum)
+            if (verbose == True):
+                # Plot output raw flux (We can remove CRs later)
+                grapher.plot_raw_flux(flux_raw1, target_dir, scinum)
             
 #--------------------------------------
 #wavelength calibration
@@ -471,12 +472,13 @@ if __name__ == "__main__":
                     lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
                     lam_fit_pixc.append(pixc[i]) # Pixc of successfully fit wavelength values
                 except RuntimeError:
-                    print("Curve fit failed at maxfev=1000")
-                    print("Trying to fit:",lam[i],pixc[i])
-                    print("p0 is:",p0)
-                    print("Now trying with maxfev=10000")
+                    if (verbose == True):
+                        print("Curve fit failed at maxfev=1000")
+                        print("Trying to fit:",lam[i],pixc[i])
+                        print("p0 is:",p0)
+                        print("Now trying with maxfev=10000")
                     lam_width = 11
-                    print("And lam_width:",lam_width)
+                    #print("And lam_width:",lam_width)
                     a_col = argon[:, cen_line[i]] # Get every column value that is in cen_line
                     flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
                     # We want locations along the y
@@ -485,15 +487,16 @@ if __name__ == "__main__":
                     p0 = [np.max(flux_vals), pixc[i], 2.0, 0] # Guess that the gussian peak is the max height
                     bounds = [(0,0,1,-100),(np.inf,np.inf,np.inf,np.inf)] # a, mu, sig, bck
                     # Curve fit takes, x (locations), y (values)
-                    print("NEW p0 is:",p0)
+                    #print("NEW p0 is:",p0)
                     popt, _ = curve_fit(functions.G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=10000) # ignore covariance matrix spat out from curve_fit
                     lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
                     lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
                     lam_fit_pixc.append(pixc[i]) # Pixc of successfully fit wavelength values
             
-            print("KARP fitted ", len(lam_fit), " lines")
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
+            if (verbose == True):
+                print("KARP fitted ", len(lam_fit), " lines")
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
             cfits = [] # Empty array for putting the fitted line centers
             for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
                 cfits.append(lam_fit[i][1])
@@ -501,23 +504,24 @@ if __name__ == "__main__":
             print("Argon Lines Fit Parameters:")
             with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
                 f.write("Argon Lines Fit Parameters:\n")
-        
-            s_lsp = [] # Sigmas of the lam line fits for the line split function
-            for i in range(len(lam_fit)):
-                a, mu, sigma, bck = lam_fit[i]
-                s_lsp.append(sigma)
-                print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
-                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                    f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
-            #for i in range(len(lam_fit_linenum)):
-            #   print("Lam:",lam_fit_linenum[i],"pixc:",lam_fit_pixc[i],"ycen actual fit to argon lines:",cfits[i])
             
-            print("Line Split Function:",np.mean(s_lsp))
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
-            print("(avg of sig of line fits)")
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("(avg of sig of line fits)\n")    
+            if (verbose == True):
+                s_lsp = [] # Sigmas of the lam line fits for the line split function
+                for i in range(len(lam_fit)):
+                    a, mu, sigma, bck = lam_fit[i]
+                    s_lsp.append(sigma)
+                    print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
+                    with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                        f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
+                #for i in range(len(lam_fit_linenum)):
+                #   print("Lam:",lam_fit_linenum[i],"pixc:",lam_fit_pixc[i],"ycen actual fit to argon lines:",cfits[i])
+                
+                print("Line Split Function:",np.mean(s_lsp))
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
+                print("(avg of sig of line fits)")
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("(avg of sig of line fits)\n")    
             
             # Fit a cubic poly nomial with cfits (actual line centers)
             # Fitting c fits (actual line centers in pixels) to lam_fit_linenum (successfully fit line wavelength values from lam)
@@ -533,20 +537,21 @@ if __name__ == "__main__":
             y_pix = np.arange(0,len(flux_raw_cor1),1)
             
             v_helio = sci_tools.heliocentric_correction(objRA, objDEC, otime)
-        
-            print("v_helio:",v_helio,"km/s") # -4 km/s for G093440
             
-            grapher.plot_sci_lamcal(y_lam, y_pix, flux_raw_cor1, target_dir, scinum)
-            
-            print("Calculating RMS A")
+            if (verbose == True):
+                print("v_helio:",v_helio,"km/s") # -4 km/s for G093440
+                grapher.plot_sci_lamcal(y_lam, y_pix, flux_raw_cor1, target_dir, scinum)
         
             # Lambda calibration graph
             del_lam = [] # Lam_fit - Lam_cal
-            print("len(cfits)",len(cfits))
-            print("len(lam):",len(lam))
+            if (verbose == True):
+                print("Calculating RMS A")
+                print("len(cfits)",len(cfits))
+                print("len(lam):",len(lam))
             for i in range(len(lam)):
                 # cfits is the center fit value in pixels
-                print(cfits[i])
+                if (verbose == True):
+                    print(cfits[i])
                 if not np.isnan(cfits[i]):
                     del_lam.append(float(lam[i])-float(y_lam(cfits[i]))) # The wavelength value we want to fit the line to MINUS the value our fit says that that line is at
                 else:
@@ -557,9 +562,10 @@ if __name__ == "__main__":
             dlS = []
             for i in range(len(del_lam)):
                 dlS.append(del_lam[i]**2)
-            print("RMS A:",np.sqrt(np.mean(dlS)))
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("RMS A:"+str(np.sqrt(np.mean(dlS)))+"\n")
+            if (verbose == True):
+                print("RMS A:",np.sqrt(np.mean(dlS)))
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("RMS A:"+str(np.sqrt(np.mean(dlS)))+"\n")
             print("Calculating RMS km/s")
             dlols = [] # Delta lambda over lambda
             for i in range(len(del_lam)):
@@ -575,8 +581,9 @@ if __name__ == "__main__":
             rnErr = []
             res_vel = [] # Residuals in velocity space
             for i in range(len(lam)):
-                print("Angstrom:",lam[i]," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
-                print("km/s:",(del_lam[i]/lam[i])*3*10**5," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
+                if (verbose == True):
+                    print("Angstrom:",lam[i]," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
+                    print("km/s:",(del_lam[i]/lam[i])*3*10**5," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
                 res_vel.append((del_lam[i]/lam[i])*3*10**5)
             
             print("Plotting Residuals...")
@@ -584,31 +591,34 @@ if __name__ == "__main__":
             for i in range(len(flux_raw_cor1)): # For our corrected fluxes
                 rnErr.append(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))
         
-            #make lamcalres plots
-            grapher.lam_cal_res(pixc, del_lam, target_dir, scinum)
-            grapher.lam_cal_res_vel(pixc, res_vel, target_dir, scinum)
-        
-            print("Mean Wavelength residual (delLAM):",np.mean(del_lam))
-            print("Mean Velocity residual (delVEL):",np.mean(res_vel))
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
-                f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
+            if (verbose == True):
+                #make lamcalres plots
+                grapher.lam_cal_res(pixc, del_lam, target_dir, scinum)
+                grapher.lam_cal_res_vel(pixc, res_vel, target_dir, scinum)
+                
+                print("Mean Wavelength residual (delLAM):",np.mean(del_lam))
+                print("Mean Velocity residual (delVEL):",np.mean(res_vel))
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
+                    f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
             
-            grapher.plot_sci_lamcal_res(y_lam, y_pix, flux_raw_cor1, rnErr, target_dir, scinum)
+                grapher.plot_sci_lamcal_res(y_lam, y_pix, flux_raw_cor1, rnErr, target_dir, scinum)
             
             # Print dispersion, as (number of angstroms we go over/number of pixels (4096))
             # Recall that our lam is fit inverse of our pixels, ie 246 pix = 6000 Angstroms
             lam_out_max = y_lam(np.min(y_pix)) # Max wavelength as a function of pixel, ie the wavelength fit to the last pixel
             lam_out_min = y_lam(np.max(y_pix)) # Minimum wavelength as a function of pixel, ie the wavelength fit to the first pixel
-            print("lam_out_max:",lam_out_max)
-            print("lam_out_min:",lam_out_min)
-            print("Dispersion: ",(lam_out_max-lam_out_min)/len(y_pix), " Angstroms/pix")
             dispersion = (lam_out_max-lam_out_min)/len(y_pix)
             
-            with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("lam_out_max:"+str(lam_out_max)+"\n")
-                f.write("lam_out_min:"+str(lam_out_min)+"\n")
-                f.write("Dispersion:"+str((lam_out_max-lam_out_min)/len(y_pix))+"Angstroms/pix\n")
+            if (verbose == True):
+                print("lam_out_max:",lam_out_max)
+                print("lam_out_min:",lam_out_min)
+                print("Dispersion: ",(lam_out_max-lam_out_min)/len(y_pix), " Angstroms/pix")
+            
+                with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("lam_out_max:"+str(lam_out_max)+"\n")
+                    f.write("lam_out_min:"+str(lam_out_min)+"\n")
+                    f.write("Dispersion:"+str((lam_out_max-lam_out_min)/len(y_pix))+"Angstroms/pix\n")
                 
             # Store flux_raw_cor1
             with open(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt", "w") as file:
@@ -722,8 +732,9 @@ if __name__ == "__main__":
             con_lam_test = []
             for i in range(len(wavelengths)):
                 con_lam_test.append(functions.con_lam(wavelengths[i], fit_params))
-                
-            grapher.plot_sci_flux_masked(lam_red, lam_remove, flux_mask_red, flux_mask_remove, wavelengths, con_lam_test, target_dir, scinum)
+            
+            if (verbose == True):
+                grapher.plot_sci_flux_masked(lam_red, lam_remove, flux_mask_red, flux_mask_remove, wavelengths, con_lam_test, target_dir, scinum)
             
             Fnorm_Es = [] # Estimated normalized flux
             for i in range(len(flux_raw_cor1)):
@@ -821,7 +832,7 @@ if __name__ == "__main__":
             smooth_cont = uniform_filter(np.array(fitted_values), size=norm_line_boxcar)
             
             # Plot fitted flux values from the line fit to see what is going on
-            grapher.plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, target_dir, scinum)
+            grapher.plot_fit_over_flux(verbose, fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, target_dir, scinum)
             
             Fnorm = [] # Normalized flux
             for i in range(len(fitted_fluxes)):
@@ -839,7 +850,8 @@ if __name__ == "__main__":
             for i in range(len(fitted_fluxes)):
                 sf_sm.append(float(fitted_fluxes[i]+fitted_sky[i])**(1/2)/smooth_cont[i]) 
             
-            grapher.plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, scinum)
+            if (verbose == True):
+                grapher.plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, scinum)
             
             # Write a file for the spectra of this sci image
             # In the form G123456_61_OUT.fits in the OUT folder
@@ -859,9 +871,10 @@ if __name__ == "__main__":
             fo.write("KARP is combining spectra\n")
         # Use glob to get everything in the folder
         file_names = glob.glob(str(target_dir)+"OUT/*OUT.fits")
-        print("Using these file names:",file_names)
-        with open(str(target_dir)+"OUT/KARP_OUT_log.txt", "a") as fo:
-            fo.write("Using these file names:"+str(file_names)+"\n")
+        if (verbose == True):
+            print("Using these file names:",file_names)
+            with open(str(target_dir)+"OUT/KARP_OUT_log.txt", "a") as fo:
+                fo.write("Using these file names:"+str(file_names)+"\n")
         
         # Use wavelength grid from first file
         wave_ref = Table.read(file_names[0])["Lam"]
@@ -926,12 +939,13 @@ if __name__ == "__main__":
         # Compute sig_final
         sig_final = RMS * np.array(sig_w)/sig_w55
         
-        print("(RMS/sig_w55)",(RMS/sig_w55))
-        with open(str(target_dir)+"OUT/KARP_OUT_log.txt", "a") as fo:
-            fo.write("(RMS/sig_w55)"+str(RMS/sig_w55)+"\n")
+        if (verbose == True):
+            print("(RMS/sig_w55)",(RMS/sig_w55))
+            with open(str(target_dir)+"OUT/KARP_OUT_log.txt", "a") as fo:
+                fo.write("(RMS/sig_w55)"+str(RMS/sig_w55)+"\n")
         
         
-        grapher.plot_combined_norm(gwave, med_comb, sig_final, RMS, target_dir, objid)
+        grapher.plot_combined_norm(verbose, gwave, med_comb, sig_final, RMS, target_dir, objid)
     
 #--------------------------------------------------
         if (fit_lines == True):
