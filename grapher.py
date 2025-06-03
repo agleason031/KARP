@@ -5,15 +5,11 @@ aux grapher module for KARP
 '''
 
 #import packages
+from functions import G
 from astropy.nddata import CCDData
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-
-# Define a Gaussian
-def G(x, a, mu, sigma, bck):
-	return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
-	# A 4d Gaussian
 
 #fit individual plots for each metal line
 def metal_line_plt(metal_fits, gwave, mask, med_comb, lines, target_dir):
@@ -306,7 +302,7 @@ def make_aperature_plots(sci1_fit, sci_final_1, cen_line, a_width, buff_width, b
         ax.tick_params(labelsize=14)
     
         # Save and clean up
-        fig.tight_layout()
+        #fig.tight_layout()
         fig.savefig(os.path.join(save_dir, f"EData{i}.png"))
         plt.close(fig)
         
