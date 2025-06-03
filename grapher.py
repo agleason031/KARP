@@ -72,7 +72,7 @@ def metal_line_big_plt(metal_fits, metal_lines, metal_mask, gwave, med_comb, tar
     plt.savefig(str(target_dir) + f"OUT/{objid}_metal_lines_all.png", dpi=300)
     plt.close(fig)
 
-def plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, wout, fout, vel_mask, target_dir, objid):
+def plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, vel_mask, target_dir, objid):
     for i in range(len(vel_fit)):
         a, mu, sig, bck = vel_fit[i]
         print("For line:",vel_fit_linenum[i]+1,"KARP fit:",mu,"Angstroms")
@@ -86,11 +86,6 @@ def plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, wout, f
         axVel.plot(gwave,G(gwave,a,mu,sig,bck))
         axVel.axhline(1,color="red",linestyle="--")
         axVel.axvline(mu,color="black",linestyle="--")
-        # Correct Max's points for heliocentric velocity with v=4km/s
-        for j in range(len(wout)):
-            wout[j] = wout[j]*(1+(4/(3*10**5)))
-        
-        axVel.scatter(wout,fout,color="green",s=1)
         axVel.axvline(vel_lines[i],color="blue",linestyle="--")
         axVel.set_xlim(int(vel_lines[i]-vel_mask[i]),int(vel_lines[i]+vel_mask[i]))
         axVel.set_xlabel("Wavelength (A)")
@@ -103,46 +98,46 @@ def plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, wout, f
         
         plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_Vel_"+str(i+1)+".png", dpi=300)
         
-def plot_masterbias(masterbias, target_dir, scinum, objid):
+def plot_masterbias(masterbias, target_dir, objid):
     plt.clf()
     plt.imshow(masterbias)
     plt.colorbar()
     plt.title('Master Bias Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"MBias_"+str(scinum)+".png")
+    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_MBias.png")
     print("Master Bias Made")
     
-def plot_masterflat(masterflat, target_dir, scinum, objid):
+def plot_masterflat(masterflat, target_dir, objid):
     plt.clf()
     plt.imshow(masterflat)
     plt.colorbar()
     plt.title('Master Flat Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_MFlat_"+str(scinum)+".png")
+    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_MFlat.png")
     print("Master Flat Made")
 
-def plot_masterflatDEbias(masterflatDEbias, target_dir, scinum, objid):
+def plot_masterflatDEbias(masterflatDEbias, target_dir, objid):
     plt.clf()
     plt.imshow(masterflatDEbias)
     plt.colorbar()
     plt.title('Master Flat sub Bias Image')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_MF_MB_"+str(scinum)+".png")
+    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_MF_MB.png")
     print("Master Flat-Bias Made")
     
-def plot_smooth_mf_mb(smooth_mf_mb, target_dir, scinum, objid):
+def plot_smooth_mf_mb(smooth_mf_mb, target_dir, objid):
     plt.clf()
     plt.imshow(smooth_mf_mb)
     plt.colorbar()
     plt.title('Smoothed MF_MB Image (5x5 Boxcar)')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_smoothed_MF_MB_"+str(scinum)+".png")
+    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_smoothed_MF_MB.png")
     print("Smoothed MF_MB Made")
     
-def plot_final_flat(final_flat, target_dir, scinum, objid):
+def plot_final_flat(final_flat, target_dir, objid):
     plt.clf()
     plt.imshow(final_flat)
     plt.colorbar()
     plt.title('Final Flat')
-    plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+objid+"_final_flat.png")
+    plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_final_flat.png")
     final_flat_write = CCDData(final_flat, unit="adu")
-    final_flat_write.write(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"final_flat_"+str(scinum)+".fits", overwrite = True)
+    final_flat_write.write(str(target_dir)+"OUT/"+str(objid)+"_final_flat.fits", overwrite = True)
     
 def plot_sci_final(sci_final, target_dir, scinum, objid):
     plt.clf()
@@ -415,7 +410,7 @@ def plot_sci_normalized(fitted_wavelengths, Fnorm, sf_sm, target_dir, objid, sci
     axNorm.set_ylabel("Normalized Flux")
     plt.savefig(str(target_dir)+"ImageNumber_"+str(scinum)+"/"+"Sci_Normalized_hbeta"+str(scinum)+".png", dpi=300)   
 
-def plot_combined_norm(gwave, med_comb, sig_final, wout, fout, eout, RMS, target_dir, objid):
+def plot_combined_norm(gwave, med_comb, sig_final, RMS, target_dir, objid):
     plt.cla()
     fig, axNorm = plt.subplots(1, 1, figsize=(8,6))
     axNorm.scatter(gwave,med_comb, s=0.8,color="black")
@@ -426,9 +421,6 @@ def plot_combined_norm(gwave, med_comb, sig_final, wout, fout, eout, RMS, target
     
     axNorm.scatter(gwave,sig_final, s=0.3,color="red")
     axNorm.set_title("Median Normalized Spectra for "+str(objid)+", SNR 5500 A:"+str(np.round(1/RMS, decimals=2)))
-    
-    axNorm.scatter(wout,fout,s=0.6,color="green")
-    axNorm.scatter(wout,eout,s=0.3,color="blue")
     
     plt.savefig(str(target_dir)+"OUT/"+str(objid)+"_OUT.png", dpi=300)
     

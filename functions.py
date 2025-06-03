@@ -5,17 +5,14 @@ Created on Mon Jun  2 15:13:39 2025
 
 @author: agleason
 """
-from numba import njit
 from scipy.optimize import least_squares
 import numpy as np
 
 # Define a Gaussian
-@njit
 def G(x, a, mu, sigma, bck):
 	return (a * np.exp(-(x-mu)**2/(2*sigma**2))) + bck
 	# A 4d Gaussian
     
-@njit
 def residuals(p, x, y):
     res = np.empty_like(y)
     a, mu, sigma, bck = p
