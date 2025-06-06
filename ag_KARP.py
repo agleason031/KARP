@@ -14,6 +14,7 @@ Created by Chase L. Smith, Max Moe
 from datetime import timedelta
 from astropy import log
 log.setLevel('ERROR')
+from scipy.optimize import dual_annealing
 from grapher import grapher
 import numpy as np
 import argparse
@@ -78,6 +79,43 @@ def take_bait(file):
         return None
     # return values
     return params
+
+def process_images(x):
+    #optimize == true overrides control flow
+    if optimize == True:
+        sci_mods.appw = int(round(x[0]))
+        grapher.appw = int(round(x[0]))
+        sci_mods.norm_line_width = int(round(x[1]))
+        sci_mods.norm_line_boxcar = int(round(x[2]))
+        
+    if skip_red == False or optimize == True:
+        #get image filenames
+        blist = [functions.format_fits_filename(dloc, b) for b in bim]
+        flist = [functions.format_fits_filename(dloc, f) for f in fim]
+        sci_list = [functions.format_fits_filename(dloc, s) for s in sim]
+    
+        masterbias, final_flat = sci_tools.get_cal_images(blist, flist, verbose, grapher)
+        
+        #individual image processing
+        global_args = sci_list, masterbias, final_flat, verbose
+        for scinum in sim:
+            sci_mods.reduce_image(scinum, global_args)
+        
+    if spec_norm == True or optimize == True:
+        #do individual image processing here too
+        for scinum in sim:
+            sci_mods.normalization(scinum, verbose)
+            
+    # If comb_spec = True, then take a number of input tables labled as
+    # G123456_61_OUT.txt, G123456_62_OUT.txt, G123456_63_OUT.txt
+    # for normalized spectra for science images 61, 62,  and 63 for example
+    if comb_spec == True or optimize == True:
+        SNR = sci_mods.combine_spectra(verbose)
+        
+    return SNR
+
+def negative_snr(x):
+    return -process_images(x)
 #------------------------------------
 
 if __name__ == "__main__":
@@ -112,6 +150,7 @@ if __name__ == "__main__":
     comb_spec = functions.string_to_bool(params["comb_spec"])
     fit_lines = functions.string_to_bool(params["fit_lines"])
     spec_norm = functions.string_to_bool(params["spec_norm"])
+    optimize = functions.string_to_bool(params["optimize"])
     verbose = functions.string_to_bool(params["verbose"])
     
     grapher = grapher(params)
@@ -123,12 +162,13 @@ if __name__ == "__main__":
         print(params) # Print out parameters
         print("------------")
         
+        os.makedirs(target_dir+"ImageNumber_"+str(scistart), exist_ok=True)
         with open(target_dir+"ImageNumber_"+str(scistart)+"/KARP_log.txt", "a") as f:
             f.write("KARP has taken the bait! (Input file):\n")
             f.write("------------\n")
             f.write(str(params))
             f.write("------------\n")
-    
+
     if skip_red == False:
         print("KARP is doing reduction!")
     elif skip_red == True:
@@ -147,33 +187,27 @@ if __name__ == "__main__":
     
 #------------------------------------------
     
-    if skip_red == False:
-        #get image filenames
-        blist = [functions.format_fits_filename(dloc, b) for b in bim]
-        flist = [functions.format_fits_filename(dloc, f) for f in fim]
-        sci_list = [functions.format_fits_filename(dloc, s) for s in sim]
-    
-        masterbias, final_flat = sci_tools.get_cal_images(blist, flist, verbose, grapher)
+    if (optimize == True):
+        bounds = [
+            (5, 20),  # a_width
+            (150, 400),    # norm_line_width
+            (30, 100),    # norm_line_boxcar
+            ] 
         
-        #individual image processing
-        global_args = sci_list, masterbias, final_flat, verbose
-        for scinum in sim:
-            sci_mods.reduce_image(scinum, global_args)
+        res = dual_annealing(negative_snr, bounds=bounds, maxiter=30, minimizer_kwargs={'method': 'L-BFGS-B', 'tol': 1.0})
+        optimal_width = int(round(res.x[0])) * 2 + 1
+        optimal_snr = -res.fun
+        optimal_norm_width = res.x[1]
+        optimal_boxcar = res.x[2]
         
-    if spec_norm == True:
-        #do individual image processing here too
-        for scinum in sim:
-            sci_mods.normalization(scinum, verbose)
-    
-    # If comb_spec = True, then take a number of input tables labled as
-    # G123456_61_OUT.txt, G123456_62_OUT.txt, G123456_63_OUT.txt
-    # for normalized spectra for science images 61, 62,  and 63 for example
-    if comb_spec == True:
-        gwave, med_comb, sig_final = sci_mods.combine_spectra(verbose)
+        print(f"Optimal aperture width: {optimal_width}, SNR: {optimal_snr}")
+        print(f"Optimal norm width: {optimal_norm_width} and optimal boxcar: {optimal_boxcar}")
+    else:
+        SNR = process_images((sci_mods.appw, sci_mods.norm_line_width, sci_mods.norm_line_boxcar))    
         
     if (fit_lines == True):
-        sci_tools.fit_vel_lines(gwave, med_comb, grapher)
-        sci_tools.fit_metal_lines(gwave, med_comb, sig_final, grapher)
+        sci_tools.fit_vel_lines(sci_mods.gwave, sci_mods.med_comb, grapher)
+        sci_tools.fit_metal_lines(sci_mods.gwave, sci_mods.med_comb, sci_mods.sig_final, grapher)
         
 #--------------------------------------------------------
 #finishing tasks

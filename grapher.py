@@ -111,45 +111,13 @@ class grapher:
                 axVel.set_title("HeI "+str(vel_lines[i])+"A line lam-lam_0: "+str(del_vel_lam)+" A radV: "+str(((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)+"km/s")
             
             plt.savefig(self.target_dir+"OUT/"+self.objid+"_Vel_"+str(i+1)+".png", dpi=300)
-            
-    def plot_masterbias(self, masterbias):
-        plt.clf()
-        plt.imshow(masterbias)
-        plt.colorbar()
-        plt.title('Master Bias Image')
-        plt.savefig(self.target_dir+"OUT/"+self.objid+"_MBias.png")
-        print("Master Bias Made")
         
-    def plot_masterflat(self, masterflat):
+    def plot_image(self, image, name):        
         plt.clf()
-        plt.imshow(masterflat)
+        plt.imshow(image)
         plt.colorbar()
-        plt.title('Master Flat Image')
-        plt.savefig(self.target_dir+"OUT/"+self.objid+"_MFlat.png")
-        print("Master Flat Made")
-    
-    def plot_masterflatDEbias(self, masterflatDEbias):
-        plt.clf()
-        plt.imshow(masterflatDEbias)
-        plt.colorbar()
-        plt.title('Master Flat sub Bias Image')
-        plt.savefig(self.target_dir+"OUT/"+self.objid+"_MF_MB.png")
-        print("Master Flat-Bias Made")
-        
-    def plot_smooth_mf_mb(self, smooth_mf_mb):
-        plt.clf()
-        plt.imshow(smooth_mf_mb)
-        plt.colorbar()
-        plt.title('Smoothed MF_MB Image (5x5 Boxcar)')
-        plt.savefig(self.target_dir+"OUT/"+self.objid+"_smoothed_MF_MB.png")
-        print("Smoothed MF_MB Made")
-        
-    def plot_final_flat(self, final_flat):
-        plt.clf()
-        plt.imshow(final_flat)
-        plt.colorbar()
-        plt.title('Final Flat')
-        plt.savefig(self.target_dir+"OUT/"+self.objid+"_final_flat.png")
+        plt.title(name + ' Image')
+        plt.savefig(self.target_dir+"OUT/"+self.objid+"_"+name+".png")
         
     def plot_sci_final(self, sci_final, scinum):
         plt.clf()

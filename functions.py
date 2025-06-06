@@ -24,10 +24,9 @@ def residuals(p, x, y):
     return res
 
 # Our continuum function:
+@njit
 def con_lam(wave, params):
     aa,bb,cc,dd,ee,ff,gg = params
-    # Vectorize
-    wave = np.array(wave)
     # flux as a function of wavelength
     return (aa*(wave)**6)+(bb*(wave)**5)+(cc*wave**4)+(dd*wave**3)+(ee*wave**2)+(ff*wave)+gg
 
@@ -38,18 +37,22 @@ def y_lam(y, fit, v_helio):
     # Wavelength as a function of pixel with helocentric velocity correction
     return ((a*(y/2000)**3)+(b*(y/2000)**2)+c*(y/2000)+d)*(1+(v_helio/(3*10**5)))
 
-
 def fit_cent_gaussian(row, clr, a_width, buff_width, bckrnd_width):
     clr = int(clr + 0.5)
 
     fit_start = clr - a_width
     fit_end   = clr + a_width
-    bck_start = clr - a_width - buff_width - bckrnd_width
-    bck_end   = clr + a_width + buff_width + bckrnd_width
+    buff_start = fit_start - buff_width
+    buff_end   = fit_end + buff_width
+    bck_start = buff_start - bckrnd_width
+    bck_end   = buff_end + bckrnd_width
 
     x_vals = np.arange(fit_start, fit_end)
     y_vals = row[fit_start:fit_end]
-    y_bck  = row[bck_start:bck_end]
+    # Exclude the fit + buffer region from background
+    y_bck_left  = row[bck_start:buff_start]
+    y_bck_right = row[buff_end:bck_end]
+    y_bck = np.concatenate([y_bck_left, y_bck_right])
 
     bck = np.median(y_bck)
     amp = np.max(y_vals) - bck
@@ -57,7 +60,7 @@ def fit_cent_gaussian(row, clr, a_width, buff_width, bckrnd_width):
 
     bounds = ([0, 0, 1, -100], [np.inf, np.inf, np.inf, np.inf])
 
-    result = least_squares(residuals, p0, args=(x_vals, y_vals), bounds=bounds, max_nfev=300)
+    result = least_squares(residuals, p0, args=(x_vals, y_vals), bounds=bounds, max_nfev=100)
 
     if result.success:
         return result.x

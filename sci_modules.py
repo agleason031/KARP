@@ -65,8 +65,18 @@ class sci_modules:
         self.target_dir = str(params["target_dir"]) 
         self.norm_line_width = int(params["norm_line_width"])  # When normalizing spectra, this is the one-half width of the line KARP will try and fit at each point
         self.norm_line_boxcar = int(params["norm_line_boxcar"]) # When normalizing the spectra, 
+        self.gwave = []
+        self.med_comb = []
+        self.sig_final = []
         
         self.grapher = grapher
+        
+        self.v_helio = heliocentric_correction(self.objRA, self.objDEC, self.otime)
+        self.flux_raw_cor1_dict = {}
+        self.wavelengths_dict = {}
+        self.sky_raw_dict = {}
+        self.sci_final_dict = {}
+        self.argon = np.asarray(CCDData.read(format_fits_filename(self.dloc, self.argnum), unit="adu").data)
         
     #does all the image reduction through wavelength calibration
     def reduce_image(self, scinum, global_args):
@@ -85,17 +95,19 @@ class sci_modules:
             f.write("\n")
             f.write("KARP is reducing Science Image number:"+str(scinum)+"\n")
         
-        sci_final = (ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat
-        if (verbose == True):
+        #creates sci_final_1 if not already created
+        if scinum in self.sci_final_dict:
+            sci_final_1 = self.sci_final_dict[scinum]
+        else:
+            sci_final = np.asarray((ccdproc.subtract_bias(CCDData.read(sci_location,format = 'fits', unit = "adu"),masterbias).data)/final_flat)
+            # Convert from ADU to electrons
+            sci_final_1 = sci_final*0.6
+            self.sci_final_dict[scinum] = sci_final_1
+        
+        if (verbose == True): #plot and write to disk
             self.grapher.plot_sci_final(sci_final, scinum)
-        sci_final_write = CCDData(sci_final, unit="adu")
-        sci_final_write.write(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
-        
-        # Read all three of our final sci images and convert to nparrays
-        sci_final_1 = np.asarray(CCDData.read(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", unit = "adu").data)
-        
-        # Convert from ADU to electrons
-        sci_final_1 = sci_final_1*0.6
+            sci_final_write = CCDData(sci_final, unit="adu")
+            sci_final_write.write(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"sci_final_"+str(scinum)+".fits", overwrite = True)
         
     #----------------------------
     #trace fitting
@@ -196,16 +208,14 @@ class sci_modules:
                 print("Y:",i," a:",a," mu:",mu," sig:",sigma," bck:",bck)
                 with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
                     f.write("Y:"+str(i)+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
-            # Plot Gaussian center values vs y pix and Gaussian sigma value vs Y pix
             print("Plotting Gauss cen values and Gauss sig values vs Y pix")
             self.grapher.gauss_cen_plots(sci1_fit, cen_line, scinum)
             
-        
         cen_line = np.round(cen_line).astype(int)
+        
         # Make a plot of 20 evenly spaced pix
         # Showing the data, the apertures and buffers as lines,
         # And the over plotted G fit
-        
         if (verbose == True):
             print("Making 20 aperture plots and aperature fit plots")
             self.grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, scinum)
@@ -226,12 +236,12 @@ class sci_modules:
             c = cen_line[i]
             g_func = lambda x: G(x,a,mu,sigma,bck) # quad() requires a function; lambda used to wrap G
             c_flux, _ = quad(g_func,c-self.appw, c+self.appw) # Center app flux
-            bkg_right, _ = quad(g_func,(c-(self.appw+self.buffw+self.bckw)),(c-self.appw))
-            bkg_left, _ = quad(g_func,(c-(self.appw+self.buffw+self.bckw)),(c-self.appw))
+            bkg_right, _ = quad(g_func,(c+self.appw+self.buffw), (c+(self.appw+self.buffw+self.bckw)))
+            bkg_left, _ = quad(g_func,(c-(self.appw+self.buffw+self.bckw)),(c-self.appw-self.buffw))
             # Append flux_raw with our flux for each row
-            flux_raw1.append(c_flux-((self.appw/(2*self.bckw))*(bkg_right+bkg_right)))    
+            flux_raw1.append(c_flux-((self.appw/(2*self.bckw))*(bkg_right+bkg_left)))
             inrow = sci_final_1[i]
-            sky_raw1.append(float(self.appw/self.bckw)*(np.sum(inrow[(c-self.appw-self.buffw-self.bckw):(c-self.appw-self.buffw)])+np.sum(inrow[(c+self.appw+self.buffw+self.bckw):(c+self.appw+self.buffw)]))) # Sum up both sides of the background
+            sky_raw1.append(float(self.appw/(2*self.bckw))*(np.sum(inrow[(c-self.appw-self.buffw-self.bckw):(c-self.appw-self.buffw)])+np.sum(inrow[(c+self.appw+self.buffw+self.bckw):(c+self.appw+self.buffw)]))) # Sum up both sides of the background
             # Recall that we need to scale for the amount of "Sky" that is technically within our aperture size
         
         if (verbose == True):
@@ -240,24 +250,21 @@ class sci_modules:
         
     #--------------------------------------
     #wavelength calibration
-    
+        
         pixc = [250,295,765,925,953,1275,1330,1396,1480,2870,3355,3421,3612,3780]
         lam = [6416.31,6384.72,6032.13,5912.09,5888.58,5650.70,5606.73,5558.70,5495.87,4510.73,4200.67,4158.59,4044.42,3948.97]
-        
-        argon = np.asarray(CCDData.read(format_fits_filename(self.dloc, self.argnum), unit="adu").data)
         
         # Lambda calibration
         print("Fitting lambda Gaussians...")
         
-        lam_width = 7 # Width to fit wavelength gaussians
+        lam_width = 8 # Width to fit wavelength gaussians
         lam_fit = [] # Stores fit parameters as [a, mu, sig]
         lam_fit_linenum = [] # Succesfully fitted line wavelength
         lam_fit_pixc = [] # Succesfully fitted line pixc
         
-        
         for i in range(len(pixc)):
             # We want the flux values around pixc
-            a_col = argon[:, cen_line[i]] # Get every column value that is in cen_line
+            a_col = self.argon[:, cen_line[i]] # Get every column value that is in cen_line
             flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
             # We want locations along the y
             loc_vals = np.arange((pixc[i]-lam_width),(pixc[i]+lam_width)) # fit to y pixel values of 5 of the center of the argon wavelength
@@ -277,16 +284,10 @@ class sci_modules:
                     print("p0 is:",p0)
                     print("Now trying with maxfev=10000")
                 lam_width = 11
-                #print("And lam_width:",lam_width)
-                a_col = argon[:, cen_line[i]] # Get every column value that is in cen_line
                 flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
-                # We want locations along the y
                 loc_vals = np.arange((pixc[i]-lam_width),(pixc[i]+lam_width)) # fit to y pixel values of 5 of the center of the argon wavelength
                
                 p0 = [np.max(flux_vals), pixc[i], 2.0, 0] # Guess that the gussian peak is the max height
-                bounds = [(0,0,1,-100),(np.inf,np.inf,np.inf,np.inf)] # a, mu, sig, bck
-                # Curve fit takes, x (locations), y (values)
-                #print("NEW p0 is:",p0)
                 popt, _ = curve_fit(G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=10000) # ignore covariance matrix spat out from curve_fit
                 lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
                 lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
@@ -294,16 +295,10 @@ class sci_modules:
         
         if (verbose == True):
             print("KARP fitted ", len(lam_fit), " lines")
-            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
-        cfits = [] # Empty array for putting the fitted line centers
-        for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
-            cfits.append(lam_fit[i][1])
-        
-        if (verbose == True):
             print("Argon Lines Fit Parameters:")
             with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Argon Lines Fit Parameters:\n")
+                f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
+                f.write("Argon Lines Fit Parameters:\n")                
             
             s_lsp = [] # Sigmas of the lam line fits for the line split function
             for i in range(len(lam_fit)):
@@ -312,15 +307,16 @@ class sci_modules:
                 print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
                 with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
                     f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
-            #for i in range(len(lam_fit_linenum)):
-            #   print("Lam:",lam_fit_linenum[i],"pixc:",lam_fit_pixc[i],"ycen actual fit to argon lines:",cfits[i])
             
             print("Line Split Function:",np.mean(s_lsp))
-            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
             print("(avg of sig of line fits)")
             with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("(avg of sig of line fits)\n")    
+                f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
+                f.write("(avg of sig of line fits)\n")                    
+                
+        cfits = [] # Empty array for putting the fitted line centers
+        for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
+            cfits.append(lam_fit[i][1])
         
         # Fit a cubic poly nomial with cfits (actual line centers)
         # Fitting c fits (actual line centers in pixels) to lam_fit_linenum (successfully fit line wavelength values from lam)
@@ -330,16 +326,18 @@ class sci_modules:
             cfits_red.append(cfits[i]/2000)
         y_lam_fit = np.polyfit(cfits_red,lam_fit_linenum,3)    
         #print(a,b,c,d) # As a*x^3+bx^2+c*x+d = lam(y)
-        flux_raw1 = np.array(flux_raw1)
+        flux_raw1 = np.array(flux_raw1) 
         ii = flux_raw1 > 0
         flux_raw_cor1 = flux_raw1[ii]
         y_pix = np.arange(0,len(flux_raw_cor1),1)
         
-        v_helio = heliocentric_correction(self.objRA, self.objDEC, self.otime)
+        # Store y_lam(y_pix)=wavelengths
+        # Heliocentric correction here as well (Should be carried over from y_lam)
+        wavelengths = y_lam(y_pix, y_lam_fit, self.v_helio) # Wavelength of each pixel
         
         if (verbose == True):
-            print("v_helio:",v_helio,"km/s") # -4 km/s for G093440
-            self.grapher.plot_sci_lamcal(y_lam, y_pix, flux_raw_cor1, y_lam_fit, v_helio, scinum)
+            print("v_helio:",self.v_helio,"km/s") # -4 km/s for G093440
+            self.grapher.plot_sci_lamcal(y_lam, y_pix, flux_raw_cor1, y_lam_fit, self.v_helio, scinum)
     
         # Lambda calibration graph
         del_lam = [] # Lam_fit - Lam_cal
@@ -352,16 +350,16 @@ class sci_modules:
             if (verbose == True):
                 print(cfits[i])
             if not np.isnan(cfits[i]):
-                del_lam.append(float(lam[i])-float(y_lam(cfits[i], y_lam_fit, v_helio))) # The wavelength value we want to fit the line to MINUS the value our fit says that that line is at
+                del_lam.append(float(lam[i])-float(y_lam(cfits[i], y_lam_fit, self.v_helio)))  # The wavelength value we want to fit the line to MINUS the value our fit says that that line is at
             else:
                 print("NAN here")
             #print(offset[i])
             
-        # Put print RMS here
-        dlS = []
-        for i in range(len(del_lam)):
-            dlS.append(del_lam[i]**2)
         if (verbose == True):
+            # Put print RMS here
+            dlS = []
+            for i in range(len(del_lam)):
+                dlS.append(del_lam[i]**2)
             print("RMS A:",np.sqrt(np.mean(dlS)))
             with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
                 f.write("RMS A:"+str(np.sqrt(np.mean(dlS)))+"\n")
@@ -374,23 +372,24 @@ class sci_modules:
         with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
             f.write("RMS km/s:"+str(np.sqrt(np.mean(dlols))*3*10**5)+"\n")
         # Should be ~10 km/s 0.1 A or even 0.05 A
-    
-        # Print RMS in A, and in velocity
-        # and plot counts vs error
-        rnErr = []
-        res_vel = [] # Residuals in velocity space
-        for i in range(len(lam)):
-            if (verbose == True):
-                print("Angstrom:",lam[i]," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
-                print("km/s:",(del_lam[i]/lam[i])*3*10**5," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
-            res_vel.append((del_lam[i]/lam[i])*3*10**5)
         
-        print("Plotting Residuals...")
-        
-        for i in range(len(flux_raw_cor1)): # For our corrected fluxes
-            rnErr.append(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))
+        #save data to class dictionaries for easy loading
+        self.flux_raw_cor1_dict[scinum] = flux_raw_cor1
+        self.wavelengths_dict[scinum] = wavelengths
+        self.sky_raw_dict[scinum] = sky_raw1
     
         if (verbose == True):
+            rnErr = []
+            res_vel = [] # Residuals in velocity space
+            for i in range(len(lam)):
+                print("Angstrom:",lam[i]," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
+                print("km/s:",(del_lam[i]/lam[i])*3*10**5," sqrt(flux+sky):",(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))) # Print the RMS error
+                res_vel.append((del_lam[i]/lam[i])*3*10**5)
+            print("Plotting Residuals...")
+            
+            for i in range(len(flux_raw_cor1)): # For our corrected fluxes
+                rnErr.append(float(flux_raw_cor1[i]+sky_raw1[i])**(1/2))
+            
             #make lamcalres plots
             self.grapher.lam_cal_res(pixc, del_lam, scinum)
             self.grapher.lam_cal_res_vel(pixc, res_vel, scinum)
@@ -401,15 +400,13 @@ class sci_modules:
                 f.write("Mean Wavelength residual (delLAM):"+str(np.mean(del_lam))+"\n")
                 f.write("Mean Velocity residual (delVEL):"+str(np.mean(res_vel))+"\n")
         
-            self.grapher.plot_sci_lamcal_res(y_lam, y_pix, flux_raw_cor1, rnErr, y_lam_fit, v_helio, scinum)
+            self.grapher.plot_sci_lamcal_res(y_lam, y_pix, flux_raw_cor1, rnErr, y_lam_fit, self.v_helio, scinum)
         
-        # Print dispersion, as (number of angstroms we go over/number of pixels (4096))
-        # Recall that our lam is fit inverse of our pixels, ie 246 pix = 6000 Angstroms
-        lam_out_max = y_lam(np.min(y_pix), y_lam_fit, v_helio) # Max wavelength as a function of pixel, ie the wavelength fit to the last pixel
-        lam_out_min = y_lam(np.max(y_pix), y_lam_fit, v_helio) # Minimum wavelength as a function of pixel, ie the wavelength fit to the first pixel
-        
-        
-        if (verbose == True):
+            # Print dispersion, as (number of angstroms we go over/number of pixels (4096))
+            # Recall that our lam is fit inverse of our pixels, ie 246 pix = 6000 Angstroms
+            lam_out_max = y_lam(np.min(y_pix), y_lam_fit, self.v_helio) # Max wavelength as a function of pixel, ie the wavelength fit to the last pixel
+            lam_out_min = y_lam(np.max(y_pix), y_lam_fit, self.v_helio) # Minimum wavelength as a function of pixel, ie the wavelength fit to the first pixel
+            
             dispersion = (lam_out_max-lam_out_min)/len(y_pix)
             print("lam_out_max:",lam_out_max)
             print("lam_out_min:",lam_out_min)
@@ -420,22 +417,19 @@ class sci_modules:
                 f.write("lam_out_min:"+str(lam_out_min)+"\n")
                 f.write("Dispersion:"+str(dispersion)+"Angstroms/pix\n")
             
-        # Store flux_raw_cor1
-        with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt", "w") as file:
-            for val in flux_raw_cor1:
-                file.write(f"{val}\n")
+            # Store flux_raw_cor1
+            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt", "w") as file:
+                for val in flux_raw_cor1:
+                    file.write(f"{val}\n")
+            
+            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt", "w") as file:
+                for wave in wavelengths:
+                    file.write(f"{wave}\n")
         
-        # Store y_lam(y_pix)=wavelengths
-        # Heliocentric correction here as well (Should be carried over from y_lam)
-        wavelengths = y_lam(y_pix, y_lam_fit, v_helio) # Wavelength of each pixel
-        with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt", "w") as file:
-            for wave in wavelengths:
-                file.write(f"{wave}\n")
-    
-        # Store raw sky values
-        with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"skyraw_"+str(scinum)+".txt", "w") as file:
-            for sky in sky_raw1:
-                file.write(f"{sky}\n")
+            # Store raw sky values
+            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"skyraw_"+str(scinum)+".txt", "w") as file:
+                for sky in sky_raw1:
+                    file.write(f"{sky}\n")
 
 #-----------------------------------------
 
@@ -446,6 +440,7 @@ class sci_modules:
         # H_8,H_eta, H_zeta,Ca_K,Ca_H, H_epsilon,H_delta,H_gamma, H_beta, SodiumD2, SodiumD1, H_alpha
         features = [3796.94,3835.40,3889.06,3933.7,3969,3970.075,4101.73,4340.47,4861.35,5889.96,5895.93,6562.81]
         
+        '''
         flux_raw_cor1a = open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt") # read in raw flux
         flux_raw_cor1a1 = flux_raw_cor1a.read()
         flux_raw_cor1b = flux_raw_cor1a1.splitlines()
@@ -460,7 +455,12 @@ class sci_modules:
         sky1a1 = sky1a.read()
         skyb = sky1a1.splitlines()
         sky1a.close()
+        '''
+        flux_raw_cor1 = list(self.flux_raw_cor1_dict[scinum])
+        wavelengths = list(self.wavelengths_dict[scinum])
+        sky_raw1 = list(self.sky_raw_dict[scinum])
         
+        '''
         # Empty values
         flux_raw_cor1 = []
         wavelengths = []
@@ -468,13 +468,13 @@ class sci_modules:
         flux_raw_cor1 = [float(val) for val in flux_raw_cor1b]
         wavelengths = [float(val) for val in wavelengthsb]
         sky_raw1 = [float(val) for val in skyb]
-    
+        '''
         # Remove 4 pixels from either edge to ensure bad chip pixels aren't affecting our fits
         flux_raw_cor1 = flux_raw_cor1[3:-4]
         wavelengths = wavelengths[3:-4]
-        
-        
         flux_masked = np.array(flux_raw_cor1.copy()) # Create a copy so we can still use flux_raw_cor1
+        flux_raw_cor1_np = np.array(flux_raw_cor1, dtype=float)
+        wavelengths_np = np.array(wavelengths, dtype=float)
         
         print(f"Estimating continuum on {scinum}")
         # Make each line have its own feature mask width to get a good mask
@@ -507,7 +507,7 @@ class sci_modules:
                 flux_mask_red.append(flux_masked[i])
                 lam_red.append(wavelengths[i])
                 removed_index.append(0) # The index values of the pixels that we keep for fitting later
-            if np.isnan(flux_masked[i]) == True:
+            else:
                 # Pixels that we take out
                 flux_mask_remove.append(flux_raw_cor1[i])
                 removed_index.append(1) # The index values of the pixels that we remove for fitting later
@@ -515,17 +515,13 @@ class sci_modules:
         
         # Fit a continuum to out spectra:
         fit_params = np.polyfit(lam_red,flux_mask_red,6)    
-        #print(aa,bb,cc,dd,ee) # As a*x^4+bx^3+c*x^2+d*x+e = flux_masked
-        
-        con_lam_test = []
-        for i in range(len(wavelengths)):
-            con_lam_test.append(con_lam(wavelengths[i], fit_params))            
-        Fnorm_Es = [] # Estimated normalized flux
-        for i in range(len(flux_raw_cor1)):
-            Fnorm_Es.append(float(flux_raw_cor1[i]/(con_lam(wavelengths[i], fit_params)))) # Divide raw flux by our continuum that we just fit
+        Fnorm_Es = flux_raw_cor1_np / con_lam(wavelengths_np, fit_params) # Divide raw flux by our continuum that we just fit
         
         # Plot our first estimate on the normalized flux
         if (verbose == True):
+            con_lam_test = []
+            for i in range(len(wavelengths)):
+                con_lam_test.append(con_lam(wavelengths_np[i], fit_params)) 
             self.grapher.plot_sci_flux_norm_est(wavelengths, Fnorm_Es, scinum)
             self.grapher.plot_sci_flux_masked(lam_red, lam_remove, flux_mask_red, flux_mask_remove, wavelengths, con_lam_test, scinum)
         
@@ -731,4 +727,8 @@ class sci_modules:
         
         self.grapher.plot_combined_norm(gwave, med_comb, sig_final, RMS)
         
-        return gwave, med_comb, sig_final
+        self.gwave = gwave
+        self.med_comb = med_comb
+        self.sig_final = sig_final
+        
+        return 1/RMS

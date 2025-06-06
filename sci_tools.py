@@ -17,6 +17,17 @@ from functions import G
 import numpy as np
 import ccdproc
 import csv
+import inspect
+
+_calibration_cache = {}
+
+def get_var_name(var):
+    frame = inspect.currentframe().f_back  # Get the caller's frame
+    local_vars = frame.f_locals
+    for name, value in local_vars.items():
+        if value is var:
+            return name
+    return None  # If no match is found
 
 #returns correction needed for earth's motion
 def heliocentric_correction(objRA, objDEC, otime):
@@ -44,6 +55,11 @@ def heliocentric_correction(objRA, objDEC, otime):
 
 #creates and returns bias and flat images
 def get_cal_images(blist, flist, verbose, grapher):
+    #get images from cache if already created
+    key = grapher.objid
+    if key in _calibration_cache:
+        return _calibration_cache[key]
+    
     # Make a master bias from the input bias image
     print("Making Master Bias")
     masterbias = ccdproc.combine(blist, method='median', unit='adu',sigma_clip=True, sigma_clip_low_thresh=5, sigma_clip_high_thresh=5,sigma_clip_func=np.ma.median, sigma_clip_dev_func=mad_std,mem_limit=350e6)
@@ -88,14 +104,15 @@ def get_cal_images(blist, flist, verbose, grapher):
             final_flat[yOther1[k], xOther1[i]] = 1
             
     if (verbose == True):
-        grapher.plot_masterbias(masterbias)
-        grapher.plot_final_flat(final_flat)
+        grapher.plot_image(masterbias, get_var_name(masterbias))
+        grapher.plot_image(final_flat, get_var_name(final_flat))
             
     final_flat_write = CCDData(final_flat, unit="adu")
     final_flat_write.write(grapher.target_dir+"OUT/"+grapher.objid+"_final_flat.fits", overwrite = True)
     
     print("Final Flat Made")
-        
+    
+    _calibration_cache[key] = (masterbias, final_flat)
     return masterbias, final_flat
             
 def fit_metal_lines(gwave, med_comb, sig_final, grapher):
