@@ -7,7 +7,6 @@ Created on Wed Jun  4 15:52:33 2025
 """
 from tqdm import tqdm
 from scipy.optimize import curve_fit
-from scipy.integrate import quad
 from scipy.ndimage import uniform_filter1d
 from scipy.ndimage import uniform_filter
 from scipy.interpolate import interp1d
@@ -20,13 +19,29 @@ from functions import format_fits_filename
 from functions import y_lam
 from functions import con_lam
 from sci_tools import heliocentric_correction
+from numba import njit
 import ccdproc
 import os
 import glob
 import numpy as np
+import math
 
 #-------------------------------------
 #helper functions
+
+@njit
+def gaussian_integral_vec(a, mu, sigma, bck, x1, x2):
+    result = np.empty(a.shape)
+    sqrt2 = math.sqrt(2.0)
+    sqrt_2pi = math.sqrt(2.0 * math.pi)
+    for i in range(a.shape[0]):
+        term1 = (x2[i] - mu[i]) / (sqrt2 * sigma[i])
+        term2 = (x1[i] - mu[i]) / (sqrt2 * sigma[i])
+        erf_term = math.erf(term1) - math.erf(term2)
+        gauss_area = a[i] * sigma[i] * sqrt_2pi * 0.5 * erf_term
+        bck_area = bck[i] * (x2[i] - x1[i])
+        result[i] = gauss_area + bck_area
+    return result
 
 def run_fit(args):
     row, clr, appw, buffw, bckw = args
@@ -77,6 +92,8 @@ class sci_modules:
         self.sky_raw_dict = {}
         self.sci_final_dict = {}
         self.argon = np.asarray(CCDData.read(format_fits_filename(self.dloc, self.argnum), unit="adu").data)
+        
+        self.cen_line_dict = {}
         
     #does all the image reduction through wavelength calibration
     def reduce_image(self, scinum, global_args):
@@ -185,8 +202,10 @@ class sci_modules:
                 
         # cen_line is now cleaned, smoothed, and robust to fitting artifacts
         cen_line = np.sort(cen_line) # Doesn't change the number of cen_line pixels, just sorts outliers
+        cen_line = np.round(cen_line).astype(int)
         self.grapher.plot_cen_line(cen_line, scinum)
         
+        self.cen_line_dict[scinum] = cen_line.copy()
     #----------------------------------
     #flux extraction
         
@@ -209,9 +228,7 @@ class sci_modules:
                 with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
                     f.write("Y:"+str(i)+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
             print("Plotting Gauss cen values and Gauss sig values vs Y pix")
-            self.grapher.gauss_cen_plots(sci1_fit, cen_line, scinum)
-            
-        cen_line = np.round(cen_line).astype(int)
+            self.grapher.gauss_cen_plots(sci1_fit, cen_line, scinum)        
         
         # Make a plot of 20 evenly spaced pix
         # Showing the data, the apertures and buffers as lines,
@@ -221,28 +238,37 @@ class sci_modules:
             self.grapher.make_aperature_fit_plots(sci1_fit, sci_final_1, cen_line, scinum)
             self.grapher.make_aperature_plots(sci1_fit, sci_final_1, cen_line, scinum)
             
-        # Now set down an aparature and get the flux
-        # in the center and another aperture to get the background level
-        
-        flux_raw1 = [] # Raw, unormalized or lam calibrated flux
-        sky_raw1 = [] # Raw, unormalized or lam cal sky value for use later
-        
         # Extract spectrum value from each y row
         print("Extracting flux...")
-        for i in range(len(sci1_fit)): 
-            a, mu, sigma, bck = sci1_fit[i]
-            if np.isnan(a):
-                continue
-            c = cen_line[i]
-            g_func = lambda x: G(x,a,mu,sigma,bck) # quad() requires a function; lambda used to wrap G
-            c_flux, _ = quad(g_func,c-self.appw, c+self.appw) # Center app flux
-            bkg_right, _ = quad(g_func,(c+self.appw+self.buffw), (c+(self.appw+self.buffw+self.bckw)))
-            bkg_left, _ = quad(g_func,(c-(self.appw+self.buffw+self.bckw)),(c-self.appw-self.buffw))
-            # Append flux_raw with our flux for each row
-            flux_raw1.append(c_flux-((self.appw/(2*self.bckw))*(bkg_right+bkg_left)))
-            inrow = sci_final_1[i]
-            sky_raw1.append(float(self.appw/(2*self.bckw))*(np.sum(inrow[(c-self.appw-self.buffw-self.bckw):(c-self.appw-self.buffw)])+np.sum(inrow[(c+self.appw+self.buffw+self.bckw):(c+self.appw+self.buffw)]))) # Sum up both sides of the background
-            # Recall that we need to scale for the amount of "Sky" that is technically within our aperture size
+        # Now set down an aparature and get the flux in the center and another aperture to get the background level
+        
+        #mask out rows with nan gaussian fits
+        sci1_fit = np.array(sci1_fit)
+        valid_mask = ~np.isnan(sci1_fit[:, 0])  # 'a' values not NaN
+        indices = np.where(valid_mask)[0]
+        valid_fit = sci1_fit[valid_mask]
+        valid_cen = cen_line[valid_mask]
+        
+        a, mu, sigma, bck = valid_fit.T
+        c = valid_cen
+        
+        # Define fixed offset ranges from each center
+        x1_ap = c - self.appw
+        x2_ap = c + self.appw
+        x1_br = c + self.appw + self.buffw
+        x2_br = c + self.appw + self.buffw + self.bckw
+        
+        ap_flux = gaussian_integral_vec(a, mu, sigma, bck, x1_ap, x2_ap)
+        bkg_right = gaussian_integral_vec(a, mu, sigma, bck, x1_br, x2_br)
+        flux_valid = ap_flux - (self.appw / self.bckw) * (bkg_right)
+        
+        # Sky background is just the flat background level scaled to aperture width
+        sky_valid = bck * (2 * self.appw)
+        
+        flux_raw1 = np.full_like(cen_line, np.nan, dtype=np.float64)
+        flux_raw1[indices] = flux_valid
+        sky_raw1 = np.full_like(cen_line, np.nan, dtype=np.float64)
+        sky_raw1[indices] = sky_valid
         
         if (verbose == True):
             # Plot output raw flux (We can remove CRs later)
@@ -433,42 +459,17 @@ class sci_modules:
 
 #-----------------------------------------
 
-    def normalization(self, scinum, verbose):
+    def normalization(self, scinum, verbose):        
         # Mask out deep absorption features
         # Deep features in order of ascending wavelength, in angstroms
         # We have spectra down to Lam = 3780 and up to 6600 angstroms
         # H_8,H_eta, H_zeta,Ca_K,Ca_H, H_epsilon,H_delta,H_gamma, H_beta, SodiumD2, SodiumD1, H_alpha
         features = [3796.94,3835.40,3889.06,3933.7,3969,3970.075,4101.73,4340.47,4861.35,5889.96,5895.93,6562.81]
         
-        '''
-        flux_raw_cor1a = open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"flux_raw_cor1_"+str(scinum)+".txt") # read in raw flux
-        flux_raw_cor1a1 = flux_raw_cor1a.read()
-        flux_raw_cor1b = flux_raw_cor1a1.splitlines()
-        flux_raw_cor1a.close()
-        
-        wavelengths1a = open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt") # read in corresponding wavelengths
-        wavelengths1a1 = wavelengths1a.read()
-        wavelengthsb = wavelengths1a1.splitlines()
-        wavelengths1a.close()
-        
-        sky1a = open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"wavelengths_"+str(scinum)+".txt") # read in corresponding wavelengths
-        sky1a1 = sky1a.read()
-        skyb = sky1a1.splitlines()
-        sky1a.close()
-        '''
         flux_raw_cor1 = list(self.flux_raw_cor1_dict[scinum])
         wavelengths = list(self.wavelengths_dict[scinum])
         sky_raw1 = list(self.sky_raw_dict[scinum])
         
-        '''
-        # Empty values
-        flux_raw_cor1 = []
-        wavelengths = []
-        # Remake empty values with extracted flux and wavelength
-        flux_raw_cor1 = [float(val) for val in flux_raw_cor1b]
-        wavelengths = [float(val) for val in wavelengthsb]
-        sky_raw1 = [float(val) for val in skyb]
-        '''
         # Remove 4 pixels from either edge to ensure bad chip pixels aren't affecting our fits
         flux_raw_cor1 = flux_raw_cor1[3:-4]
         wavelengths = wavelengths[3:-4]
@@ -732,3 +733,26 @@ class sci_modules:
         self.sig_final = sig_final
         
         return 1/RMS
+    
+    def compare_cen_lines(self, scinum1, scinum2):
+        if scinum1 not in self.cen_line_dict or scinum2 not in self.cen_line_dict:
+            print("One or both science image centerlines not found.")
+            return None
+    
+        cl1 = self.cen_line_dict[scinum1]
+        cl2 = self.cen_line_dict[scinum2]
+    
+        min_len = min(len(cl1), len(cl2))
+        cl1 = cl1[:min_len]
+        cl2 = cl2[:min_len]
+    
+        delta = cl2 - cl1
+        abs_diff = np.abs(delta)
+        mean_diff = np.mean(abs_diff)
+        max_diff = np.max(abs_diff)
+    
+        print(f"Comparison between image {scinum1} and {scinum2}:")
+        print(f"  Mean absolute difference: {mean_diff:.3f} pixels")
+        print(f"  Max absolute difference: {max_diff:.3f} pixels")
+    
+        return delta

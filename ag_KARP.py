@@ -189,9 +189,9 @@ if __name__ == "__main__":
     
     if (optimize == True):
         bounds = [
-            (5, 20),  # a_width
-            (150, 400),    # norm_line_width
-            (30, 100),    # norm_line_boxcar
+            (5, 10),    # a_width
+            (240, 260),    # norm_line_width
+            (65, 70),    # norm_line_boxcar
             ] 
         
         res = dual_annealing(negative_snr, bounds=bounds, maxiter=30, minimizer_kwargs={'method': 'L-BFGS-B', 'tol': 1.0})

@@ -60,7 +60,7 @@ def fit_cent_gaussian(row, clr, a_width, buff_width, bckrnd_width):
 
     bounds = ([0, 0, 1, -100], [np.inf, np.inf, np.inf, np.inf])
 
-    result = least_squares(residuals, p0, args=(x_vals, y_vals), bounds=bounds, max_nfev=100)
+    result = least_squares(residuals, p0, args=(x_vals, y_vals), bounds=bounds, max_nfev=30)
 
     if result.success:
         return result.x
