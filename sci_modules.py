@@ -10,7 +10,6 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import uniform_filter1d
 from scipy.ndimage import uniform_filter
 from scipy.interpolate import interp1d
-from concurrent.futures import ProcessPoolExecutor
 from astropy.nddata import CCDData
 from astropy.table import Table
 from functions import fit_cent_gaussian
@@ -18,30 +17,17 @@ from functions import G
 from functions import format_fits_filename
 from functions import y_lam
 from functions import con_lam
+from functions import build_fit_args
+from functions import gaussian_integral_vec
 from sci_tools import heliocentric_correction
-from numba import njit
+from joblib import Parallel, delayed
 import ccdproc
 import os
 import glob
 import numpy as np
-import math
 
 #-------------------------------------
 #helper functions
-
-@njit
-def gaussian_integral_vec(a, mu, sigma, bck, x1, x2):
-    result = np.empty(a.shape)
-    sqrt2 = math.sqrt(2.0)
-    sqrt_2pi = math.sqrt(2.0 * math.pi)
-    for i in range(a.shape[0]):
-        term1 = (x2[i] - mu[i]) / (sqrt2 * sigma[i])
-        term2 = (x1[i] - mu[i]) / (sqrt2 * sigma[i])
-        erf_term = math.erf(term1) - math.erf(term2)
-        gauss_area = a[i] * sigma[i] * sqrt_2pi * 0.5 * erf_term
-        bck_area = bck[i] * (x2[i] - x1[i])
-        result[i] = gauss_area + bck_area
-    return result
 
 def run_fit(args):
     row, clr, appw, buffw, bckw = args
@@ -91,9 +77,10 @@ class sci_modules:
         self.wavelengths_dict = {}
         self.sky_raw_dict = {}
         self.sci_final_dict = {}
-        self.argon = np.asarray(CCDData.read(format_fits_filename(self.dloc, self.argnum), unit="adu").data)
-        
         self.cen_line_dict = {}
+        self.lam_fit_dict = {}
+        self.lam_fit_linenum_dict = {}
+        self.argon = np.asarray(CCDData.read(format_fits_filename(self.dloc, self.argnum), unit="adu").data)
         
     #does all the image reduction through wavelength calibration
     def reduce_image(self, scinum, global_args):
@@ -129,92 +116,20 @@ class sci_modules:
     #----------------------------
     #trace fitting
         
-        n_rows = sci_final_1.shape[0] #gets row num
-        cen_line = np.round(np.linspace(self.clmin, self.clmax, n_rows)).astype(int)
-        # Note that this repeats each integer 51 times, stretching it to 1124
-        
-        # Fit Gaussian to each row in sci_final_1 using current cen_line estimate
-        print("KARP fitting centerline")
-        
-        # Fit and collect results in a list (each entry is a tuple: a, mu, sig, bck)
-        args_list = [(row, cen_line[i], self.appw, self.buffw, self.bckw)
-                 for i, row in enumerate(sci_final_1)]
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            cen_fit = np.array(list(tqdm(executor.map(run_fit, args_list), total=len(args_list))))
-        
-        # Convert to NumPy array and extract relevant fit parameters
-        a_vals = cen_fit[:, 0]                    # Amplitudes
-        mu_vals = cen_fit[:, 1]                   # Gaussian centers (used for center line)
-      
-        # Create preliminary centerline using fitted mu values
-        # If a or mu is NaN, mark the entry as NaN in cen_line for smoothing later
-        cen_line = np.round(mu_vals).astype(float)
-        cen_line[np.isnan(a_vals) | np.isnan(mu_vals)] = np.nan  # Replace invalid fits with NaN
-        
-        # Smooth NaN values in cen_line using a local (moving average) window
-        # We use a NaN-aware uniform filter that preserves non-NaN values and smooths only missing ones
-        print("Smoothing NaNs in centerline", flush=True)
-        smoothed_mu = nan_aware_smooth(cen_line, window=100)
-        
-        # Replace NaNs with their smoothed estimates
-        cen_line[np.isnan(cen_line)] = np.round(smoothed_mu[np.isnan(cen_line)])
-        
-        # Final pass: Replace any remaining NaNs using local median of ±50 pixels
-        print("Replacing remaining NaNs with local median")
-        for i in range(len(cen_line)):
-            if np.isnan(cen_line[i]):
-                low = max(0, i - 50) # Use max and min to account for edges
-                high = min(len(cen_line), i + 50)
-                window_vals = cen_line[low:high]
-                local_valid = window_vals[~np.isnan(window_vals)]
-                if len(local_valid) > 0:
-                    cen_line[i] = np.median(local_valid)
-                else:
-                    # As a last resort (edge case), use global median
-                    cen_line[i] = np.nanmedian(cen_line)
-        
-        # Replace remaining outliers that deviate too much from their neighborhood
-        # This helps fix spike-like errors or fit artifacts
-        print("Replacing outlier values")    
-        for i in range(50, len(cen_line) - 200):  # Avoid edges
-            # Get 200-pixel local window of mu values
-            local = mu_vals[i - 100:i + 100]
-            local = local[~np.isnan(local)]       # Ignore any NaNs in local values
-        
-            if len(local) == 0:
-                continue  # Skip if all neighbors are NaN
-        
-            cmean = np.mean(local)                # Local mean for comparison
-        
-            # Condition 1: Implausible high value (usually near image end)
-            # Condition 2: Large deviation from local average
-            if cen_line[i] > cen_line[-1] or abs(cen_line[i] - cmean) > 1.2:
-                if (verbose == True):
-                    print(f"Outlier at {i}: Replacing {cen_line[i]} with {np.round(cmean)}")
-                cen_line[i] = int(np.round(cmean))     # Replace with smoothed local mean
-        
-        # For the tails of the image if the fit becomes very poor, bin to the set max values
-        for i in range(len(cen_line)):
-            if cen_line[i] > self.clmax:
-                cen_line[i] = int(self.clmax)
-            if cen_line[i] < self.clmin:
-                cen_line[i] = int(self.clmin)
-                
-        # cen_line is now cleaned, smoothed, and robust to fitting artifacts
-        cen_line = np.sort(cen_line) # Doesn't change the number of cen_line pixels, just sorts outliers
-        cen_line = np.round(cen_line).astype(int)
-        self.grapher.plot_cen_line(cen_line, scinum)
-        
-        self.cen_line_dict[scinum] = cen_line.copy()
+        #trace shouldn't change between aperature changes, brightest spot is center and is always in aperature
+        #so save and attempt to get from dict to save expensive calculations
+        if scinum in self.cen_line_dict:
+            cen_line = self.cen_line_dict[scinum]
+        else:
+            cen_line = self.fit_trace(sci_final_1, verbose) #get center trace
+            self.grapher.plot_cen_line(cen_line, scinum)
+            self.cen_line_dict[scinum] = cen_line.copy() #save center trace
     #----------------------------------
     #flux extraction
-        
-        # Fit parameters to each row, need new fit after cleaned cen_line
-        args_list = [(row, cen_line[i], self.appw, self.buffw, self.bckw)
-                 for i, row in enumerate(sci_final_1)]
-        
-        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            sci1_fit = list(tqdm(executor.map(run_fit, args_list), total=len(args_list)))
+        fit_args = build_fit_args(sci_final_1, cen_line, self.appw, self.buffw, self.bckw)
+        sci1_fit = np.array(
+            Parallel(n_jobs=-1)(delayed(fit_cent_gaussian)(*args) for args in tqdm(fit_args))
+            )
     
         print("KARP finished fitting flux Gaussians")
         
@@ -286,63 +201,74 @@ class sci_modules:
         lam_width = 8 # Width to fit wavelength gaussians
         lam_fit = [] # Stores fit parameters as [a, mu, sig]
         lam_fit_linenum = [] # Succesfully fitted line wavelength
-        lam_fit_pixc = [] # Succesfully fitted line pixc
         
-        for i in range(len(pixc)):
-            # We want the flux values around pixc
-            a_col = self.argon[:, cen_line[i]] # Get every column value that is in cen_line
-            flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
-            # We want locations along the y
-            loc_vals = np.arange((pixc[i]-lam_width),(pixc[i]+lam_width)) # fit to y pixel values of 5 of the center of the argon wavelength
-           
-            p0 = [np.max(flux_vals), pixc[i], 2.0, 0] # Guess that the gussian peak is the max height
-            bounds = [(0,0,1,-100),(np.inf,np.inf,np.inf,np.inf)] # a, mu, sig, bck
-            try:
-                # Curve fit takes, x (locations), y (values)
-                popt, _ = curve_fit(G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=1000) # ignore covariance matrix spat out from curve_fit
-                lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
-                lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
-                lam_fit_pixc.append(pixc[i]) # Pixc of successfully fit wavelength values
-            except RuntimeError:
-                if (verbose == True):
-                    print("Curve fit failed at maxfev=1000")
-                    print("Trying to fit:",lam[i],pixc[i])
-                    print("p0 is:",p0)
-                    print("Now trying with maxfev=10000")
-                lam_width = 11
+        flux_raw1 = np.array(flux_raw1) 
+        ii = flux_raw1 > 0
+        flux_raw_cor1 = flux_raw1[ii]
+        
+        if scinum in self.lam_fit_dict:
+            lam_fit = self.lam_fit_dict[scinum]
+            lam_fit_linenum = self.lam_fit_linenum_dict[scinum]
+        else:
+            for i in range(len(pixc)):
+                # We want the flux values around pixc
+                a_col = self.argon[:, cen_line[i]] # Get every column value that is in cen_line
                 flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
+                # We want locations along the y
                 loc_vals = np.arange((pixc[i]-lam_width),(pixc[i]+lam_width)) # fit to y pixel values of 5 of the center of the argon wavelength
                
                 p0 = [np.max(flux_vals), pixc[i], 2.0, 0] # Guess that the gussian peak is the max height
-                popt, _ = curve_fit(G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=10000) # ignore covariance matrix spat out from curve_fit
-                lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
-                lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
-                lam_fit_pixc.append(pixc[i]) # Pixc of successfully fit wavelength values
-        
-        if (verbose == True):
-            print("KARP fitted ", len(lam_fit), " lines")
-            print("Argon Lines Fit Parameters:")
-            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
-                f.write("Argon Lines Fit Parameters:\n")                
+                bounds = [(0,0,1,-100),(np.inf,np.inf,np.inf,np.inf)] # a, mu, sig, bck
+                try:
+                    # Curve fit takes, x (locations), y (values)
+                    popt, _ = curve_fit(G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=1000) # ignore covariance matrix spat out from curve_fit
+                    lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
+                    lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
+                except RuntimeError:
+                    if (verbose == True):
+                        print("Curve fit failed at maxfev=1000")
+                        print("Trying to fit:",lam[i],pixc[i])
+                        print("p0 is:",p0)
+                        print("Now trying with maxfev=10000")
+                    lam_width = 11
+                    flux_vals = a_col[(pixc[i]-lam_width) : (pixc[i]+lam_width)] # Get argon values from the same pixels
+                    loc_vals = np.arange((pixc[i]-lam_width),(pixc[i]+lam_width)) # fit to y pixel values of 5 of the center of the argon wavelength
+                   
+                    p0 = [np.max(flux_vals), pixc[i], 2.0, 0] # Guess that the gussian peak is the max height
+                    popt, _ = curve_fit(G, loc_vals, flux_vals, p0=p0, bounds=bounds, maxfev=10000) # ignore covariance matrix spat out from curve_fit
+                    lam_fit.append(popt)  # [a, mu, sigma, c] returend from curve_fit
+                    lam_fit_linenum.append(lam[i]) # Wavelength values that where succesfully fit
             
-            s_lsp = [] # Sigmas of the lam line fits for the line split function
-            for i in range(len(lam_fit)):
-                a, mu, sigma, bck = lam_fit[i]
-                s_lsp.append(sigma)
-                print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
+            if (verbose == True):
+                print("KARP fitted ", len(lam_fit), " lines")
+                print("Argon Lines Fit Parameters:")
                 with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                    f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
-            
-            print("Line Split Function:",np.mean(s_lsp))
-            print("(avg of sig of line fits)")
-            with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
-                f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
-                f.write("(avg of sig of line fits)\n")                    
+                    f.write("KARP fitted"+str(len(lam_fit))+"lines\n")
+                    f.write("Argon Lines Fit Parameters:\n")                
                 
+                s_lsp = [] # Sigmas of the lam line fits for the line split function
+                for i in range(len(lam_fit)):
+                    a, mu, sigma, bck = lam_fit[i]
+                    s_lsp.append(sigma)
+                    print("Lam Line Number:",i," lam:",lam[i]," a:",a," mu:",mu," sig:",sigma," bck:",bck)
+                    with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                        f.write("Lam Line Number:"+str(i)+" lam:"+str(lam[i])+" a:"+str(a)+" mu:"+str(mu)+" sig:"+str(sigma)+" bck:"+str(bck)+"\n")
+                
+                print("Line Split Function:",np.mean(s_lsp))
+                print("(avg of sig of line fits)")
+                with open(self.target_dir+"ImageNumber_"+str(scinum)+"/KARP_log.txt", "a") as f:
+                    f.write("Line Split Function:"+str(np.mean(s_lsp))+"\n")
+                    f.write("(avg of sig of line fits)\n") 
+                
+            self.lam_fit_dict[scinum] = lam_fit
+            self.lam_fit_linenum_dict[scinum] = lam_fit_linenum
+            
+        cfits = [fit[1] for fit in lam_fit] #gets centers of each lambda fit
+        '''
         cfits = [] # Empty array for putting the fitted line centers
         for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
             cfits.append(lam_fit[i][1])
+        '''
         
         # Fit a cubic poly nomial with cfits (actual line centers)
         # Fitting c fits (actual line centers in pixels) to lam_fit_linenum (successfully fit line wavelength values from lam)
@@ -352,9 +278,6 @@ class sci_modules:
             cfits_red.append(cfits[i]/2000)
         y_lam_fit = np.polyfit(cfits_red,lam_fit_linenum,3)    
         #print(a,b,c,d) # As a*x^3+bx^2+c*x+d = lam(y)
-        flux_raw1 = np.array(flux_raw1) 
-        ii = flux_raw1 > 0
-        flux_raw_cor1 = flux_raw1[ii]
         y_pix = np.arange(0,len(flux_raw_cor1),1)
         
         # Store y_lam(y_pix)=wavelengths
@@ -399,11 +322,6 @@ class sci_modules:
             f.write("RMS km/s:"+str(np.sqrt(np.mean(dlols))*3*10**5)+"\n")
         # Should be ~10 km/s 0.1 A or even 0.05 A
         
-        #save data to class dictionaries for easy loading
-        self.flux_raw_cor1_dict[scinum] = flux_raw_cor1
-        self.wavelengths_dict[scinum] = wavelengths
-        self.sky_raw_dict[scinum] = sky_raw1
-    
         if (verbose == True):
             rnErr = []
             res_vel = [] # Residuals in velocity space
@@ -456,7 +374,14 @@ class sci_modules:
             with open(self.target_dir+"ImageNumber_"+str(scinum)+"/"+"skyraw_"+str(scinum)+".txt", "w") as file:
                 for sky in sky_raw1:
                     file.write(f"{sky}\n")
-
+                    
+        
+        
+        #save data to class dictionaries for easy loading
+        self.flux_raw_cor1_dict[scinum] = flux_raw_cor1
+        self.sky_raw_dict[scinum] = sky_raw1
+        self.wavelengths_dict[scinum] = wavelengths
+    
 #-----------------------------------------
 
     def normalization(self, scinum, verbose):        
@@ -527,9 +452,6 @@ class sci_modules:
             self.grapher.plot_sci_flux_masked(lam_red, lam_remove, flux_mask_red, flux_mask_remove, wavelengths, con_lam_test, scinum)
         
         print("Line-fit normilization")
-        wavelengths = np.array(wavelengths)
-        flux_raw_cor1 = np.array(flux_raw_cor1)
-        Fnorm_Es = np.array(Fnorm_Es)
         removed_index = np.array(removed_index)
         
         fitted_values = []
@@ -537,9 +459,9 @@ class sci_modules:
         fitted_wavelengths = []
         fitted_sky = []
         
-        flux_masked_global = flux_raw_cor1.copy()
+        flux_masked_global = flux_raw_cor1_np.copy()
         for i, feat in enumerate(features):
-            center = np.argmin(np.abs(wavelengths - feat)) # Use argmin to get the index of the minimum value of all_wavelengths-all_features, (i.e. where the center of each feature is)
+            center = np.argmin(np.abs(wavelengths_np - feat)) # Use argmin to get the index of the minimum value of all_wavelengths-all_features, (i.e. where the center of each feature is)
             start = max(0, center - feature_mask[i]) # From the center out to our feature mask size, start as far out from the edge as we can
             stop = min(len(flux_masked_global), center + feature_mask[i]) # From the center out to our feature mask size,  start as close to the edge as we can
             flux_masked_global[start:stop] = np.nan # Mask absorption lines with NANs
@@ -553,18 +475,15 @@ class sci_modules:
         include = Fnorm_Es <= rm_param
         
         # Precompute NaN masks for spectral features
-        for i in range(len(wavelengths)):            
+        for i in range(len(wavelengths_np)):            
             if Fnorm_Es[i] <= rm_param:  # Skip things that are brighter than 1.3 norm flux
                 lam_left = max(0, i - self.norm_line_width)
-                lam_right = min(len(wavelengths), i + self.norm_line_width)
-                wave_range = wavelengths[lam_left:lam_right] # Get wavelengths and fluxes around where we're trying to fit
-                flux_values = flux_raw_cor1[lam_left:lam_right]
+                lam_right = min(len(wavelengths_np), i + self.norm_line_width)
                 keep = include[lam_left:lam_right]
                 
-                wave_range = np.array(wave_range)[keep]
-                flux_values = np.array(flux_values)[keep]
-                
                 if removed_index[i] == 0: # If this wavelength is not in an absoprtion feature
+                    wave_range = wavelengths_np[lam_left:lam_right][keep] # Get wavelengths and fluxes around where we're trying to fit
+                    flux_values = flux_raw_cor1_np[lam_left:lam_right][keep]
                     # If our norm_line_width spills over into lines on either side we want to ignore them
                     wave_range_cor = []
                     flux_values_cor = []
@@ -580,39 +499,34 @@ class sci_modules:
                         # Use poly fit to fit a line to the corrected flux values as a funtion of wavelength
                         ml, bl = np.polyfit(wave_range_cor, flux_values_cor, 1)
                         # Now get the fit value of the continum at that wavelength
-                        fitted_values.append(ml * wavelengths[i] + bl)                        
+                        fitted_values.append(ml * wavelengths_np[i] + bl)                        
                     else:
                         continue  # Skip if not enough good values to fit
                         
-        
-                elif removed_index[i] != 0: # Wavelength is inside of an absorption feature
-                    lam_left = max(0, i - self.norm_line_width)
-                    lam_right = min(len(wavelengths), i + self.norm_line_width)
-        
-                    wave_range = wavelengths[lam_left:lam_right] # Get wavelengths, fluxes, and the fluxes we want to mask
-                    flux_values = flux_raw_cor1[lam_left:lam_right]
+                else: # Wavelength is inside of an absorption feature
+                    wave_range = wavelengths_np[lam_left:lam_right] # Get wavelengths, fluxes, and the fluxes we want to mask
+                    flux_values = flux_raw_cor1_np[lam_left:lam_right]
                     flux_values_masked = flux_masked_global[lam_left:lam_right] # This is flagged with NANs
         
                     valid = ~np.isnan(flux_values_masked) # Take only values from not within an absorption feature
                     if np.sum(valid) < 2: # Need at least two points to fit a line
                         continue
                     ml, bl = np.polyfit(wave_range[valid], flux_values_masked[valid], 1)
-                    fitted_values.append(ml * wavelengths[i] + bl)
+                    fitted_values.append(ml * wavelengths_np[i] + bl)
                 
                 # Append fit results for global use
-                
-                fitted_fluxes.append(flux_raw_cor1[i])
-                fitted_wavelengths.append(wavelengths[i])
+                fitted_fluxes.append(flux_raw_cor1_np[i])
+                fitted_wavelengths.append(wavelengths_np[i])
                 fitted_sky.append(sky_raw1[i])
                 
                 if np.isnan(flux_masked[i]) != True:
                     # Pixels we want to keep
                     flux_mask_reda.append(flux_masked[i])
-                    lam_reda.append(wavelengths[i])
-                if np.isnan(flux_masked[i]) == True:
+                    lam_reda.append(wavelengths_np[i])
+                else:
                     # Pixels that we take out
-                    flux_mask_removea.append(flux_raw_cor1[i])
-                    lam_removea.append(wavelengths[i])
+                    flux_mask_removea.append(flux_raw_cor1_np[i])
+                    lam_removea.append(wavelengths_np[i])
     
         # Now smooth this fit with a moving boxcar
         smooth_cont = uniform_filter(np.array(fitted_values), size=self.norm_line_boxcar)
@@ -620,19 +534,13 @@ class sci_modules:
         # Plot fitted flux values from the line fit to see what is going on
         self.grapher.plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, scinum)
         
-        Fnorm = [] # Normalized flux
-        for i in range(len(fitted_fluxes)):
-            Fnorm.append(float(fitted_fluxes[i]/smooth_cont[i])) # Divide raw flux by our continuum that we just fit
+        Fnorm = np.array(fitted_fluxes) / smooth_cont # Divide raw flux by our continuum that we just fit
+        if verbose:
+            flagged = Fnorm >= 1.3
+            print("Found Fnorm >= 1.3:", Fnorm[flagged])
+        Fnorm = np.where(Fnorm >= 1.3, 1.0, Fnorm)
         
-        for i in range(len(Fnorm)):
-            if Fnorm[i] >= 1.3:
-                if (verbose == True):
-                    print("Found Fnorm >= 1.3:", Fnorm[i])
-                Fnorm[i] = 1
-        
-        sf_sm = [] # sqrt(sky+flux)/smooth_fit
-        for i in range(len(fitted_fluxes)):
-            sf_sm.append(float(fitted_fluxes[i]+fitted_sky[i])**(1/2)/smooth_cont[i]) 
+        sf_sm = np.sqrt(np.array(fitted_fluxes) + np.array(fitted_sky)) / smooth_cont
         
         if (verbose == True):
             print("Plotting Normalized Spectra")
@@ -756,3 +664,81 @@ class sci_modules:
         print(f"  Max absolute difference: {max_diff:.3f} pixels")
     
         return delta
+    
+    def fit_trace(self, sci_final_1, verbose):
+        n_rows = sci_final_1.shape[0] #gets row num
+        cen_line = np.round(np.linspace(self.clmin, self.clmax, n_rows)).astype(int)
+        # Note that this repeats each integer 51 times, stretching it to 1124
+        
+        # Fit Gaussian to each row in sci_final_1 using current cen_line estimate
+        print("KARP fitting centerline")
+        
+        # Fit and collect results in a list (each entry is a tuple: a, mu, sig, bck)
+        fit_args = build_fit_args(sci_final_1, cen_line, self.appw, self.buffw, self.bckw)
+        cen_fit = np.array(
+            Parallel(n_jobs=-1)(delayed(fit_cent_gaussian)(*args) for args in tqdm(fit_args))
+            )
+        
+        # Convert to NumPy array and extract relevant fit parameters
+        a_vals = cen_fit[:, 0]                    # Amplitudes
+        mu_vals = cen_fit[:, 1]                   # Gaussian centers (used for center line)
+      
+        # Create preliminary centerline using fitted mu values
+        # If a or mu is NaN, mark the entry as NaN in cen_line for smoothing later
+        cen_line = np.round(mu_vals).astype(float)
+        cen_line[np.isnan(a_vals) | np.isnan(mu_vals)] = np.nan  # Replace invalid fits with NaN
+        
+        # Smooth NaN values in cen_line using a local (moving average) window
+        # We use a NaN-aware uniform filter that preserves non-NaN values and smooths only missing ones
+        print("Smoothing NaNs in centerline", flush=True)
+        smoothed_mu = nan_aware_smooth(cen_line, window=100)
+        
+        # Replace NaNs with their smoothed estimates
+        cen_line[np.isnan(cen_line)] = np.round(smoothed_mu[np.isnan(cen_line)])
+        
+        # Final pass: Replace any remaining NaNs using local median of ±50 pixels
+        print("Replacing remaining NaNs with local median")
+        for i in range(len(cen_line)):
+            if np.isnan(cen_line[i]):
+                low = max(0, i - 50) # Use max and min to account for edges
+                high = min(len(cen_line), i + 50)
+                window_vals = cen_line[low:high]
+                local_valid = window_vals[~np.isnan(window_vals)]
+                if len(local_valid) > 0:
+                    cen_line[i] = np.median(local_valid)
+                else:
+                    # As a last resort (edge case), use global median
+                    cen_line[i] = np.nanmedian(cen_line)
+        
+        # Replace remaining outliers that deviate too much from their neighborhood
+        # This helps fix spike-like errors or fit artifacts
+        print("Replacing outlier values")    
+        for i in range(50, len(cen_line) - 200):  # Avoid edges
+            # Get 200-pixel local window of mu values
+            local = mu_vals[i - 100:i + 100]
+            local = local[~np.isnan(local)]       # Ignore any NaNs in local values
+        
+            if len(local) == 0:
+                continue  # Skip if all neighbors are NaN
+        
+            cmean = np.mean(local)                # Local mean for comparison
+        
+            # Condition 1: Implausible high value (usually near image end)
+            # Condition 2: Large deviation from local average
+            if cen_line[i] > cen_line[-1] or abs(cen_line[i] - cmean) > 1.2:
+                if (verbose == True):
+                    print(f"Outlier at {i}: Replacing {cen_line[i]} with {np.round(cmean)}")
+                cen_line[i] = int(np.round(cmean))     # Replace with smoothed local mean
+        
+        # For the tails of the image if the fit becomes very poor, bin to the set max values
+        for i in range(len(cen_line)):
+            if cen_line[i] > self.clmax:
+                cen_line[i] = int(self.clmax)
+            if cen_line[i] < self.clmin:
+                cen_line[i] = int(self.clmin)
+                
+        # cen_line is now cleaned, smoothed, and robust to fitting artifacts
+        cen_line = np.sort(cen_line) # Doesn't change the number of cen_line pixels, just sorts outliers
+        cen_line = np.round(cen_line).astype(int)
+        
+        return cen_line

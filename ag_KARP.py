@@ -14,7 +14,7 @@ Created by Chase L. Smith, Max Moe
 from datetime import timedelta
 from astropy import log
 log.setLevel('ERROR')
-from scipy.optimize import dual_annealing
+from scipy.optimize import differential_evolution
 from grapher import grapher
 import numpy as np
 import argparse
@@ -85,8 +85,8 @@ def process_images(x):
     if optimize == True:
         sci_mods.appw = int(round(x[0]))
         grapher.appw = int(round(x[0]))
-        sci_mods.norm_line_width = int(round(x[1]))
-        sci_mods.norm_line_boxcar = int(round(x[2]))
+        sci_mods.norm_line_width = int(round(x[1] * 5))
+        sci_mods.norm_line_boxcar = int(round(x[2] * 5))
         
     if skip_red == False or optimize == True:
         #get image filenames
@@ -189,16 +189,16 @@ if __name__ == "__main__":
     
     if (optimize == True):
         bounds = [
-            (5, 10),    # a_width
-            (240, 260),    # norm_line_width
-            (65, 70),    # norm_line_boxcar
-            ] 
+            (7, 15),    # a_width
+            (150 / 5, 400 / 5),    # norm_line_width
+            (30 / 5, 100 / 5),    # norm_line_boxcar
+            ] # division by 5 is to reduce parameter space and speed up optimization
         
-        res = dual_annealing(negative_snr, bounds=bounds, maxiter=30, minimizer_kwargs={'method': 'L-BFGS-B', 'tol': 1.0})
+        res = differential_evolution(negative_snr, bounds=bounds, maxiter=20, strategy='best1bin', popsize=10, tol=1)
         optimal_width = int(round(res.x[0])) * 2 + 1
         optimal_snr = -res.fun
-        optimal_norm_width = res.x[1]
-        optimal_boxcar = res.x[2]
+        optimal_norm_width = res.x[1] * 5
+        optimal_boxcar = res.x[2] * 5
         
         print(f"Optimal aperture width: {optimal_width}, SNR: {optimal_snr}")
         print(f"Optimal norm width: {optimal_norm_width} and optimal boxcar: {optimal_boxcar}")
