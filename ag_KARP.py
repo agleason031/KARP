@@ -190,7 +190,7 @@ if __name__ == "__main__":
     if (optimize == True):
         bounds = [
             (7, 15),    # a_width
-            (150 / 5, 400 / 5),    # norm_line_width
+            (150 / 5, 300 / 5),    # norm_line_width
             (30 / 5, 100 / 5),    # norm_line_boxcar
             ] # division by 5 is to reduce parameter space and speed up optimization
         

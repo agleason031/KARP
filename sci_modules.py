@@ -264,11 +264,6 @@ class sci_modules:
             self.lam_fit_linenum_dict[scinum] = lam_fit_linenum
             
         cfits = [fit[1] for fit in lam_fit] #gets centers of each lambda fit
-        '''
-        cfits = [] # Empty array for putting the fitted line centers
-        for i in range(len(lam_fit)): # For each line KARP was able to fit, get the center of the Gaussian from the fit    
-            cfits.append(lam_fit[i][1])
-        '''
         
         # Fit a cubic poly nomial with cfits (actual line centers)
         # Fitting c fits (actual line centers in pixels) to lam_fit_linenum (successfully fit line wavelength values from lam)
@@ -375,8 +370,6 @@ class sci_modules:
                 for sky in sky_raw1:
                     file.write(f"{sky}\n")
                     
-        
-        
         #save data to class dictionaries for easy loading
         self.flux_raw_cor1_dict[scinum] = flux_raw_cor1
         self.sky_raw_dict[scinum] = sky_raw1
@@ -418,7 +411,6 @@ class sci_modules:
             start = max(0, center - feature_mask[i]) # Not 40 pixels, 40*1/*0.7 Ang/pix so like 57
             stop = min(len(flux_masked), center + feature_mask[i])
             flux_masked[start:stop] = np.nan
-        
         
         # Fit a fourth degree polynomial to the continuum estimate
         flux_mask_red = []
@@ -474,60 +466,23 @@ class sci_modules:
         rm_param = 1.3
         include = Fnorm_Es <= rm_param
         
-        # Precompute NaN masks for spectral features
-        for i in range(len(wavelengths_np)):            
-            if Fnorm_Es[i] <= rm_param:  # Skip things that are brighter than 1.3 norm flux
-                lam_left = max(0, i - self.norm_line_width)
-                lam_right = min(len(wavelengths_np), i + self.norm_line_width)
-                keep = include[lam_left:lam_right]
-                
-                if removed_index[i] == 0: # If this wavelength is not in an absoprtion feature
-                    wave_range = wavelengths_np[lam_left:lam_right][keep] # Get wavelengths and fluxes around where we're trying to fit
-                    flux_values = flux_raw_cor1_np[lam_left:lam_right][keep]
-                    # If our norm_line_width spills over into lines on either side we want to ignore them
-                    wave_range_cor = []
-                    flux_values_cor = []
-                    array = np.arange(lam_left, lam_right, 1)
-                    for k in range(len(wave_range)):
-                        if removed_index[array[k]] == 0:  # Check if there are any absorption features within the region we want to be fitting
-                        # (Recall that removed_inxed=0 corresponds to values we want to keep for fitting)
-                        # if there is not an absorption feature at that wavelength then keep the flux value for fitting
-                            wave_range_cor.append(wave_range[k])
-                            flux_values_cor.append(flux_values[k])  # Align flux_values index, as flux starts at 0
-                            
-                    if len(wave_range_cor) >= 2: # Check if we have enough points to fit
-                        # Use poly fit to fit a line to the corrected flux values as a funtion of wavelength
-                        ml, bl = np.polyfit(wave_range_cor, flux_values_cor, 1)
-                        # Now get the fit value of the continum at that wavelength
-                        fitted_values.append(ml * wavelengths_np[i] + bl)                        
-                    else:
-                        continue  # Skip if not enough good values to fit
-                        
-                else: # Wavelength is inside of an absorption feature
-                    wave_range = wavelengths_np[lam_left:lam_right] # Get wavelengths, fluxes, and the fluxes we want to mask
-                    flux_values = flux_raw_cor1_np[lam_left:lam_right]
-                    flux_values_masked = flux_masked_global[lam_left:lam_right] # This is flagged with NANs
-        
-                    valid = ~np.isnan(flux_values_masked) # Take only values from not within an absorption feature
-                    if np.sum(valid) < 2: # Need at least two points to fit a line
-                        continue
-                    ml, bl = np.polyfit(wave_range[valid], flux_values_masked[valid], 1)
-                    fitted_values.append(ml * wavelengths_np[i] + bl)
-                
-                # Append fit results for global use
-                fitted_fluxes.append(flux_raw_cor1_np[i])
-                fitted_wavelengths.append(wavelengths_np[i])
-                fitted_sky.append(sky_raw1[i])
-                
-                if np.isnan(flux_masked[i]) != True:
-                    # Pixels we want to keep
-                    flux_mask_reda.append(flux_masked[i])
-                    lam_reda.append(wavelengths_np[i])
-                else:
-                    # Pixels that we take out
-                    flux_mask_removea.append(flux_raw_cor1_np[i])
-                    lam_removea.append(wavelengths_np[i])
-    
+        for i in range(len(wavelengths_np)):        
+            results = self.fit_flux(i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index, flux_raw_cor1_np, flux_masked_global, sky_raw1)
+            if results is None:
+                continue
+            else:
+                val, sky, flux, wave, f_keep, f_remove, l_keep, l_remove = results
+                fitted_values.append(val)
+                fitted_sky.append(sky)
+                fitted_fluxes.append(flux)
+                fitted_wavelengths.append(wave)
+                if f_keep is not None:
+                    flux_mask_reda.append(f_keep)
+                    lam_reda.append(l_keep)
+                if f_remove is not None:
+                    flux_mask_removea.append(f_remove)
+                    lam_removea.append(l_remove)
+            
         # Now smooth this fit with a moving boxcar
         smooth_cont = uniform_filter(np.array(fitted_values), size=self.norm_line_boxcar)
         
@@ -742,3 +697,47 @@ class sci_modules:
         cen_line = np.round(cen_line).astype(int)
         
         return cen_line
+
+    def fit_flux(self, i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
+        flux_raw_cor1_np, flux_masked_global, sky_raw1):
+        rm_param = 1.3
+    
+        if Fnorm_Es[i] > rm_param:
+            return None  # Skip
+    
+        lam_left = max(0, i - self.norm_line_width)
+        lam_right = min(len(wavelengths_np), i + self.norm_line_width)
+        keep = include[lam_left:lam_right]
+    
+        fitted_value = None
+        if removed_index[i] == 0:
+            wave_range = wavelengths_np[lam_left:lam_right][keep]
+            flux_values = flux_raw_cor1_np[lam_left:lam_right][keep]
+            array = np.arange(lam_left, lam_right, 1)
+            wave_range_cor, flux_values_cor = [], []
+            for k in range(len(wave_range)):
+                if removed_index[array[k]] == 0:
+                    wave_range_cor.append(wave_range[k])
+                    flux_values_cor.append(flux_values[k])
+            if len(wave_range_cor) >= 2:
+                ml, bl = np.polyfit(wave_range_cor, flux_values_cor, 1)
+                fitted_value = ml * wavelengths_np[i] + bl
+            else:
+                return None
+        else:
+            wave_range = wavelengths_np[lam_left:lam_right]
+            flux_values_masked = flux_masked_global[lam_left:lam_right]
+            valid = ~np.isnan(flux_values_masked)
+            if np.sum(valid) < 2:
+                return None
+            ml, bl = np.polyfit(wave_range[valid], flux_values_masked[valid], 1)
+            fitted_value = ml * wavelengths_np[i] + bl
+    
+        flux = flux_raw_cor1_np[i]
+        wavelength = wavelengths_np[i]
+        sky = sky_raw1[i]
+    
+        if not np.isnan(flux_masked[i]):
+            return (fitted_value, sky, flux, wavelength, flux_masked[i], None, wavelength, None)
+        else:
+            return (fitted_value, sky, flux, wavelength, None, flux, None, wavelength)
