@@ -377,7 +377,7 @@ class sci_modules:
     
 #-----------------------------------------
 
-    def normalization(self, scinum, verbose):        
+    def normalization(self, scinum, verbose, optimize):        
         # Mask out deep absorption features
         # Deep features in order of ascending wavelength, in angstroms
         # We have spectra down to Lam = 3780 and up to 6600 angstroms
@@ -447,9 +447,9 @@ class sci_modules:
         removed_index = np.array(removed_index)
         
         fitted_values = []
-        fitted_fluxes = []
         fitted_wavelengths = []
         fitted_sky = []
+        fitted_fluxes = []
         
         flux_masked_global = flux_raw_cor1_np.copy()
         for i, feat in enumerate(features):
@@ -486,9 +486,10 @@ class sci_modules:
         # Now smooth this fit with a moving boxcar
         smooth_cont = uniform_filter(np.array(fitted_values), size=self.norm_line_boxcar)
         
-        # Plot fitted flux values from the line fit to see what is going on
-        self.grapher.plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, scinum)
-        
+        if optimize == False:
+            # Plot fitted flux values from the line fit to see what is going on
+            self.grapher.plot_fit_over_flux(fitted_wavelengths, smooth_cont, fitted_values, fitted_fluxes, lam_removea, flux_mask_removea, lam_red, lam_remove, flux_mask_red, flux_mask_remove, lam_reda, flux_mask_reda, scinum)
+                
         Fnorm = np.array(fitted_fluxes) / smooth_cont # Divide raw flux by our continuum that we just fit
         if verbose:
             flagged = Fnorm >= 1.3
@@ -700,44 +701,41 @@ class sci_modules:
 
     def fit_flux(self, i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
         flux_raw_cor1_np, flux_masked_global, sky_raw1):
+        
         rm_param = 1.3
-    
         if Fnorm_Es[i] > rm_param:
             return None  # Skip
     
         lam_left = max(0, i - self.norm_line_width)
         lam_right = min(len(wavelengths_np), i + self.norm_line_width)
-        keep = include[lam_left:lam_right]
-    
-        fitted_value = None
-        if removed_index[i] == 0:
-            wave_range = wavelengths_np[lam_left:lam_right][keep]
-            flux_values = flux_raw_cor1_np[lam_left:lam_right][keep]
-            array = np.arange(lam_left, lam_right, 1)
-            wave_range_cor, flux_values_cor = [], []
-            for k in range(len(wave_range)):
-                if removed_index[array[k]] == 0:
-                    wave_range_cor.append(wave_range[k])
-                    flux_values_cor.append(flux_values[k])
-            if len(wave_range_cor) >= 2:
-                ml, bl = np.polyfit(wave_range_cor, flux_values_cor, 1)
-                fitted_value = ml * wavelengths_np[i] + bl
-            else:
-                return None
-        else:
-            wave_range = wavelengths_np[lam_left:lam_right]
-            flux_values_masked = flux_masked_global[lam_left:lam_right]
-            valid = ~np.isnan(flux_values_masked)
-            if np.sum(valid) < 2:
-                return None
-            ml, bl = np.polyfit(wave_range[valid], flux_values_masked[valid], 1)
-            fitted_value = ml * wavelengths_np[i] + bl
-    
-        flux = flux_raw_cor1_np[i]
+        idx_range = slice(lam_left, lam_right)
+        
         wavelength = wavelengths_np[i]
         sky = sky_raw1[i]
+        flux = flux_raw_cor1_np[i]
     
-        if not np.isnan(flux_masked[i]):
-            return (fitted_value, sky, flux, wavelength, flux_masked[i], None, wavelength, None)
+        if removed_index[i] == 0:
+            keep = include[idx_range]
+            valid_indices = np.flatnonzero(keep & (removed_index[idx_range] == 0))
+            if len(valid_indices) < 2:
+                return None
+            
+            wave_range = wavelengths_np[idx_range][valid_indices]
+            flux_values = flux_raw_cor1_np[idx_range][valid_indices]
+        else:
+            flux_values_masked = flux_masked_global[idx_range]
+            valid = ~np.isnan(flux_values_masked)
+            if np.count_nonzero(valid) < 2:
+                return None
+            
+            wave_range = wavelengths_np[idx_range][valid]
+            flux_values = flux_values_masked[valid]
+            
+        ml, bl = np.polyfit(wave_range, flux_values, 1)
+        fitted_value = ml * wavelengths_np[i] + bl
+    
+        flux_m = flux_masked[i]
+        if not np.isnan(flux_m):
+            return (fitted_value, sky, flux, wavelength, flux_m, None, wavelength, None)
         else:
             return (fitted_value, sky, flux, wavelength, None, flux, None, wavelength)

@@ -94,7 +94,7 @@ def process_images(x):
         flist = [functions.format_fits_filename(dloc, f) for f in fim]
         sci_list = [functions.format_fits_filename(dloc, s) for s in sim]
     
-        masterbias, final_flat = sci_tools.get_cal_images(blist, flist, verbose, grapher)
+        masterbias, final_flat = sci_tools.get_cal_images(blist, flist, verbose, grapher) #verbose overwritten to false
         
         #individual image processing
         global_args = sci_list, masterbias, final_flat, verbose
@@ -104,13 +104,16 @@ def process_images(x):
     if spec_norm == True or optimize == True:
         #do individual image processing here too
         for scinum in sim:
-            sci_mods.normalization(scinum, verbose)
+            sci_mods.normalization(scinum, verbose, optimize)
             
     # If comb_spec = True, then take a number of input tables labled as
     # G123456_61_OUT.txt, G123456_62_OUT.txt, G123456_63_OUT.txt
     # for normalized spectra for science images 61, 62,  and 63 for example
     if comb_spec == True or optimize == True:
         SNR = sci_mods.combine_spectra(verbose)
+        
+    if optimize == True:
+        print(f"SNR {SNR}, APPW: {(sci_mods.appw*2)+1}, NormW: {sci_mods.norm_line_width}, NormBox: {sci_mods.norm_line_boxcar}")
         
     return SNR
 
@@ -189,12 +192,12 @@ if __name__ == "__main__":
     
     if (optimize == True):
         bounds = [
-            (7, 15),    # a_width
-            (150 / 5, 300 / 5),    # norm_line_width
-            (30 / 5, 100 / 5),    # norm_line_boxcar
+            (5, 15),    # a_width
+            (125 / 5, 250 / 5),    # norm_line_width
+            (50 / 5, 100 / 5),    # norm_line_boxcar
             ] # division by 5 is to reduce parameter space and speed up optimization
         
-        res = differential_evolution(negative_snr, bounds=bounds, maxiter=20, strategy='best1bin', popsize=10, tol=1)
+        res = differential_evolution(negative_snr, bounds=bounds, maxiter=20, strategy='best1bin', popsize=5, tol=2)
         optimal_width = int(round(res.x[0])) * 2 + 1
         optimal_snr = -res.fun
         optimal_norm_width = res.x[1] * 5
