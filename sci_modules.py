@@ -11,6 +11,7 @@ from scipy.ndimage import uniform_filter1d, uniform_filter
 from scipy.interpolate import interp1d
 from astropy.nddata import CCDData
 from astropy.table import Table
+from astropy.stats import jackknife_stats
 from functions import fit_cent_gaussian, G, build_fit_args, gaussian_integral_vec
 from functions import format_fits_filename, y_lam, con_lam
 from sci_tools import heliocentric_correction, fit_all_fluxes
@@ -508,11 +509,13 @@ class sci_modules:
 #---------------------------------------------
     
     def combine_spectra(self, verbose):
+        jackknife = False
+        
         print("KARP is combining spectra")
         # Make a KARP_OUT_log file
-        
         with open(self.target_dir+"OUT/KARP_OUT_log.txt", "w") as fo:
             fo.write("KARP is combining spectra\n")
+        
         # Use glob to get everything in the folder
         file_names = glob.glob(self.target_dir+"OUT/*OUT.fits")
         if (verbose == True):
@@ -522,45 +525,71 @@ class sci_modules:
         
         # Use wavelength grid from first file
         wave_ref = Table.read(file_names[0])["Lam"]
-    
-        # Interpolate each spectrum onto wave_ref
-        gflux_interp = []
+        #initialize variables
         gsig = []
-        for fname in file_names:
-            t = Table.read(fname)
-            f = interp1d(t["Lam"], t["Flux"], bounds_error=False, fill_value=np.nan)
-            s = interp1d(t["Lam"], t["Sigma"], bounds_error=False, fill_value=np.nan)
-            gflux_interp.append(f(wave_ref))
-            gsig.append(s(wave_ref))
-            
-        # Stack and take median, ignoring NaNs
-        gflux_array = np.array(gflux_interp)
+        med_comb = []
+        rms = 0
         gwave = wave_ref
-        gsig = np.array(gsig)
-        med_comb = np.nanmedian(gflux_array, axis=0)
-       
-        # Remove zeroth order line and any remaning outliers from bad pixels
-        for i in range(len(gwave)):
-            if 5500 <= gwave[i] <= 5700:
-                if med_comb[i] > 1.05:
+        
+        def compute_snr_from_files(leaveout_indices):
+            nonlocal gsig
+            nonlocal med_comb
+            nonlocal rms
+            
+            # Leave out one file
+            selected_files = [f for j, f in enumerate(file_names) if j not in leaveout_indices]
+        
+            # Interpolate onto reference grid
+            gflux_interp = []
+            for fname in selected_files:
+                t = Table.read(fname)
+                f = interp1d(t["Lam"], t["Flux"], bounds_error=False, fill_value=np.nan)
+                s = interp1d(t["Lam"], t["Sigma"], bounds_error=False, fill_value=np.nan)
+                gflux_interp.append(f(wave_ref))
+                gflux_array = np.array(gflux_interp)
+                gsig.append(s(wave_ref))
+        
+            # Stack and take median, ignoring NaNs
+            gflux_array = np.array(gflux_interp)
+            med_comb = np.nanmedian(gflux_array, axis=0)
+            
+            # Remove zeroth order line and any remaning outliers from bad pixels
+            for i in range(len(gwave)):
+                if 5500 <= gwave[i] <= 5700:
+                    if med_comb[i] > 1.05:
+                        med_comb[i] = 1
+                        
+            for i in range(len(med_comb)):
+                if med_comb[i] > 1.25:
                     med_comb[i] = 1
-                    
-        for i in range(len(med_comb)):
-            if med_comb[i] > 1.25:
-                med_comb[i] = 1
-                    
-        print("Computing RMS")
-        # Compute the RMS across 5450-5550 of the median combined spectra
-        one_minus_med = []
-        for i in range(len(gwave)):
-            if 5450 <= gwave[i] <= 5550 and not np.isnan(med_comb[i]):
-                one_minus_med.append((1-med_comb[i])**2)
-                #print(np.sqrt(1-med_flux[i]))
-        # Calculate and print SNR at 5500A
-        RMS = np.sqrt(1/(len(one_minus_med))*np.sum(one_minus_med))
-        print("SNR at 5500:",1/RMS)
-        with open(self.target_dir+"OUT/KARP_OUT_log.txt", "a") as fo:
-            fo.write("SNR at 5500:"+str(1/RMS)+"\n")
+        
+            print("Computing RMS")
+            # Compute RMS in 5450–5550
+            mask = (gwave >= 5450) & (gwave <= 5550) & (~np.isnan(med_comb))
+            residuals_squared = (1 - med_comb[mask])**2
+            rms = np.sqrt(np.mean(residuals_squared))
+            
+            # Calculate and print SNR at 5500A
+            print("SNR at 5500:",1/rms)
+            with open(self.target_dir+"OUT/KARP_OUT_log.txt", "a") as fo:
+                fo.write("SNR at 5500:"+str(1/rms)+"\n")
+                if jackknife == True:
+                    print(f"with files {selected_files}")
+                    fo.write(f"with files {selected_files}\n")
+        
+        if jackknife == True:
+            n_files = len(file_names)
+            #indices = np.arange(n_files)
+            
+            #snr_jackknife, bias, snr_stddev = jackknife_stats(indices, compute_snr_from_files)
+            for i in range(n_files):
+                leaveout_indices = [i]
+                compute_snr_from_files(leaveout_indices)
+        else: #do all files
+            leaveout_indices = []
+            compute_snr_from_files(leaveout_indices)
+        
+        gsig = np.array(gsig)
         
         # Calculate sig_final(lam), should be 1.2,1.3
         print("Calculating sig_final(lam)")
@@ -580,21 +609,22 @@ class sci_modules:
         sig_w55 = sig_w[sig_w55_idx]
         
         # Compute sig_final
-        sig_final = RMS * np.array(sig_w)/sig_w55
+        sig_final = rms * np.array(sig_w)/sig_w55
         
         if (verbose == True):
-            print("(RMS/sig_w55)",(RMS/sig_w55))
+            print("(RMS/sig_w55)",(rms/sig_w55))
             with open(self.target_dir+"OUT/KARP_OUT_log.txt", "a") as fo:
-                fo.write("(RMS/sig_w55)"+str(RMS/sig_w55)+"\n")
+                fo.write("(RMS/sig_w55)"+str(rms/sig_w55)+"\n")
         
-        
-        self.grapher.plot_combined_norm(gwave, med_comb, sig_final, RMS)
+        self.grapher.plot_combined_norm(gwave, med_comb, sig_final, rms)
         
         self.gwave = gwave
         self.med_comb = med_comb
         self.sig_final = sig_final
         
-        return 1/RMS
+        return 1/rms
+    
+#-----------------------------------------
     
     def compare_cen_lines(self, scinum1, scinum2):
         if scinum1 not in self.cen_line_dict or scinum2 not in self.cen_line_dict:
