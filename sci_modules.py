@@ -7,19 +7,13 @@ Created on Wed Jun  4 15:52:33 2025
 """
 from tqdm import tqdm
 from scipy.optimize import curve_fit
-from scipy.ndimage import uniform_filter1d
-from scipy.ndimage import uniform_filter
+from scipy.ndimage import uniform_filter1d, uniform_filter
 from scipy.interpolate import interp1d
 from astropy.nddata import CCDData
 from astropy.table import Table
-from functions import fit_cent_gaussian
-from functions import G
-from functions import format_fits_filename
-from functions import y_lam
-from functions import con_lam
-from functions import build_fit_args
-from functions import gaussian_integral_vec
-from sci_tools import heliocentric_correction
+from functions import fit_cent_gaussian, G, build_fit_args, gaussian_integral_vec
+from functions import format_fits_filename, y_lam, con_lam
+from sci_tools import heliocentric_correction, fit_all_fluxes
 from joblib import Parallel, delayed
 import ccdproc
 import os
@@ -205,6 +199,7 @@ class sci_modules:
         flux_raw1 = np.array(flux_raw1) 
         ii = flux_raw1 > 0
         flux_raw_cor1 = flux_raw1[ii]
+        sky_raw1 = sky_raw1[ii]
         
         if scinum in self.lam_fit_dict:
             lam_fit = self.lam_fit_dict[scinum]
@@ -391,9 +386,11 @@ class sci_modules:
         # Remove 4 pixels from either edge to ensure bad chip pixels aren't affecting our fits
         flux_raw_cor1 = flux_raw_cor1[3:-4]
         wavelengths = wavelengths[3:-4]
+        sky_raw1 = sky_raw1[3:-4]
         flux_masked = np.array(flux_raw_cor1.copy()) # Create a copy so we can still use flux_raw_cor1
         flux_raw_cor1_np = np.array(flux_raw_cor1, dtype=float)
         wavelengths_np = np.array(wavelengths, dtype=float)
+        sky_raw1 = np.array(sky_raw1)
         
         print(f"Estimating continuum on {scinum}")
         # Make each line have its own feature mask width to get a good mask
@@ -466,12 +463,13 @@ class sci_modules:
         rm_param = 1.3
         include = Fnorm_Es <= rm_param
         
-        for i in range(len(wavelengths_np)):        
-            results = self.fit_flux(i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index, flux_raw_cor1_np, flux_masked_global, sky_raw1)
-            if results is None:
+        results = fit_all_fluxes(Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
+                           flux_raw_cor1_np, flux_masked_global, sky_raw1, self.norm_line_width)
+        for row in results:        
+            if np.isnan(row[0]):
                 continue
             else:
-                val, sky, flux, wave, f_keep, f_remove, l_keep, l_remove = results
+                val, sky, flux, wave, f_keep, f_remove, l_keep, l_remove = row
                 fitted_values.append(val)
                 fitted_sky.append(sky)
                 fitted_fluxes.append(flux)
@@ -537,10 +535,10 @@ class sci_modules:
             
         # Stack and take median, ignoring NaNs
         gflux_array = np.array(gflux_interp)
-        med_comb = np.nanmedian(gflux_array, axis=0)
         gwave = wave_ref
         gsig = np.array(gsig)
-    
+        med_comb = np.nanmedian(gflux_array, axis=0)
+       
         # Remove zeroth order line and any remaning outliers from bad pixels
         for i in range(len(gwave)):
             if 5500 <= gwave[i] <= 5700:
@@ -698,44 +696,3 @@ class sci_modules:
         cen_line = np.round(cen_line).astype(int)
         
         return cen_line
-
-    def fit_flux(self, i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
-        flux_raw_cor1_np, flux_masked_global, sky_raw1):
-        
-        rm_param = 1.3
-        if Fnorm_Es[i] > rm_param:
-            return None  # Skip
-    
-        lam_left = max(0, i - self.norm_line_width)
-        lam_right = min(len(wavelengths_np), i + self.norm_line_width)
-        idx_range = slice(lam_left, lam_right)
-        
-        wavelength = wavelengths_np[i]
-        sky = sky_raw1[i]
-        flux = flux_raw_cor1_np[i]
-    
-        if removed_index[i] == 0:
-            keep = include[idx_range]
-            valid_indices = np.flatnonzero(keep & (removed_index[idx_range] == 0))
-            if len(valid_indices) < 2:
-                return None
-            
-            wave_range = wavelengths_np[idx_range][valid_indices]
-            flux_values = flux_raw_cor1_np[idx_range][valid_indices]
-        else:
-            flux_values_masked = flux_masked_global[idx_range]
-            valid = ~np.isnan(flux_values_masked)
-            if np.count_nonzero(valid) < 2:
-                return None
-            
-            wave_range = wavelengths_np[idx_range][valid]
-            flux_values = flux_values_masked[valid]
-            
-        ml, bl = np.polyfit(wave_range, flux_values, 1)
-        fitted_value = ml * wavelengths_np[i] + bl
-    
-        flux_m = flux_masked[i]
-        if not np.isnan(flux_m):
-            return (fitted_value, sky, flux, wavelength, flux_m, None, wavelength, None)
-        else:
-            return (fitted_value, sky, flux, wavelength, None, flux, None, wavelength)

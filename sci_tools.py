@@ -14,10 +14,12 @@ from astropy import units as u
 from astropy.stats import mad_std
 from astropy.nddata import CCDData
 from functions import G
+from numba import njit, prange
 import numpy as np
 import ccdproc
 import csv
 import inspect
+import os
 
 _calibration_cache = {}
 
@@ -57,8 +59,19 @@ def heliocentric_correction(objRA, objDEC, otime):
 def get_cal_images(blist, flist, verbose, grapher):
     #get images from cache if already created
     key = grapher.objid
+    bias_path = grapher.target_dir + "OUT/" + grapher.objid + "_master_bias.fits"
+    flat_path = grapher.target_dir + "OUT/" + grapher.objid + "_final_flat.fits"
+    
     if key in _calibration_cache:
         return _calibration_cache[key]
+    
+    # ✅ Load from disk if both exist
+    if os.path.exists(bias_path) and os.path.exists(flat_path):
+        print("Loading disk calibration files...")
+        masterbias = CCDData.read(bias_path, unit='adu')
+        final_flat = CCDData.read(flat_path, unit='adu')
+        _calibration_cache[key] = (masterbias, final_flat)
+        return masterbias, final_flat
     
     # Make a master bias from the input bias image
     print("Making Master Bias")
@@ -106,51 +119,68 @@ def get_cal_images(blist, flist, verbose, grapher):
     if (verbose == True):
         grapher.plot_image(masterbias, get_var_name(masterbias))
         grapher.plot_image(final_flat, get_var_name(final_flat))
-            
-    final_flat_write = CCDData(final_flat, unit="adu")
-    final_flat_write.write(grapher.target_dir+"OUT/"+grapher.objid+"_final_flat.fits", overwrite = True)
+    
+    masterbias.write(bias_path, overwrite=True)
+    CCDData(final_flat, unit="adu").write(flat_path, overwrite=True)
     
     print("Final Flat Made")
     
     _calibration_cache[key] = (masterbias, final_flat)
     return masterbias, final_flat
             
-def fit_metal_lines(gwave, med_comb, sig_final, grapher):
+def fit_metal_lines(gwave, med_comb, sig_final, metal_mask, radial_vel, grapher):
     #find equivalent widths of metal lines
     metal_lines = [3820.425, 3933.66, 4045.812, 4063.594, 4226.728, 4260.474, 4271.76, 4307.902, 4383.545, 4404.75, 4957.596, 5167.321, 5172.684, 5183.604, 5269.537, 5328.038]
-    metal_mask = [4, 3, 4, 4, 3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4]
     metal_fit = []
     metal_results = []
+    center_shifts = [((radial_vel / (3*10**5)) * line) for line in metal_lines]
+    masks = [(gwave > metal_lines[i] - metal_mask[i] + center_shifts[i]) & (gwave < metal_lines[i] + metal_mask[i] + center_shifts[i]) for i in range(len(metal_lines))]
+    
+    #makes list of bin sizes at different wavelengths
+    gwave_dif = []
+    for i in range(len(gwave)):
+        try:
+            gwave_dif.append((gwave[i+1]-gwave[i-1])/2)
+        except IndexError:
+            gwave_dif.append(0.5)
+    gwave_dif = np.array(gwave_dif)
     
     #iterate over metal lines       
-    for i, line in enumerate(metal_lines):
-        ew_sum = 0
-        		
-        mask = (gwave > line - metal_mask[i]) & (gwave < line + metal_mask[i])
-        flux_vals = med_comb[mask]
-        wave_vals = gwave[mask]
-        wave_err = sig_final[mask]
-        p0 = [-np.min(flux_vals), line, 2.0, 1.0]
+    for i, line in enumerate(metal_lines):        	
+        flux_vals = med_comb[masks[i]]
+        if len(flux_vals) == 0:
+            print(f"Line {line} is out of range")
+            metal_fit.append([0, 0, 0, 1])
+            continue
+        wave_dif = gwave_dif[masks[i]]
+        wave_vals = gwave[masks[i]]
+        wave_err = sig_final[masks[i]]
+        p0 = [max(-1+np.min(flux_vals), -0.01), line + center_shifts[i], 2.0, 1.0]
         bounds = [(-np.inf,0,1, 0.9),(0,np.inf,np.inf, 1.1)]
            
         #attempt fit
         try:
-            popt, pcov = curve_fit(G, wave_vals, flux_vals, p0=p0, bounds=bounds, maxfev=5000)
+            popt, pcov = curve_fit(G, wave_vals, flux_vals, p0=p0, bounds=bounds, maxfev=1000)
             metal_fit.append(popt)
         except RuntimeError:
+            print("------------------")
             print("Curve fit failed")
+            print(f"Metal line at {line}")
+            metal_fit.append([0, 0, 0, 1])
+            continue
         
         #define function used for fitting    
         line_fit = lambda x: G(x, popt[0], popt[1], popt[2], popt[3])
-        integrated, err_integrated = quad(line_fit, line - metal_mask[i], line + metal_mask[i])
+        integrated, err_integrated = quad(line_fit, line - metal_mask[i] + center_shifts[i], line + metal_mask[i] + center_shifts[i])
         equi_width = (metal_mask[i] * 2 * popt[3]) - integrated
         
         #riemann sum equivalent width
-        for val in flux_vals:
-            ew_sum += 0.5 * (popt[3] - val)
+        ew_sum = 0
+        for j in range(len(flux_vals)):
+            ew_sum += -wave_dif[j] * (popt[3] - flux_vals[j])
         
         #error calculation
-        error = np.sqrt(np.sum(np.square(wave_err * 0.5)))
+        error = np.sqrt(np.sum(np.square(wave_err * wave_dif)))
         sys = .002 * metal_mask[i] * 2
         adopt_err = np.sqrt(error**2 + sys**2)
         
@@ -174,10 +204,10 @@ def fit_metal_lines(gwave, med_comb, sig_final, grapher):
     print(f"Metal line results written to {csv_path}")
 
     #make graphs of fits around lines
-    grapher.metal_line_plt(metal_fit, gwave, mask, med_comb, metal_lines)
+    grapher.metal_line_plt(metal_fit, gwave, masks, med_comb, metal_lines, center_shifts)
     
     #make big plot of all metal lines
-    grapher.metal_line_big_plt(metal_fit, metal_lines, metal_mask, gwave, med_comb)
+    grapher.metal_line_big_plt(metal_fit, metal_lines, masks, gwave, med_comb, center_shifts)
     print(f"Big summary plot saved to {grapher.target_dir}OUT/{grapher.objid}_metal_lines_all.png")
 
 def fit_vel_lines(gwave, med_comb, grapher):
@@ -185,7 +215,7 @@ def fit_vel_lines(gwave, med_comb, grapher):
     print("Measuring radial velocity of the star")
     # Line names: H theta, H eta, H zeta, H delta, H gamma, H alpha, Ca K, Don;t use: Hbeta, HeI(sdB) 4471.5, HeI 4173, HeI 4922, HeI 5016
     vel_lines = [3797.91,3835.40,3889.06,4101.73,4340.47,6562.79,3933.66] # In angstroms ,,4861.35,4471.5,4713,4922
-    vel_mask = [5,5,5,5,5,5,10,10,10,10,10] # half-width of lines to fit in angstroms
+    vel_mask = [10,10,10,10,10,10,10,10,10,10,10] # half-width of lines to fit in angstroms
     vel_fit = [] # The fit parameters for the velocity fits
     vel_fit_linenum = [] # Which of the seven lines we just fit
     
@@ -195,6 +225,9 @@ def fit_vel_lines(gwave, med_comb, grapher):
        
         mask = (gwave > vel_lines[i] - vel_mask[i]) & (gwave < vel_lines[i] + vel_mask[i])
         flux_vals = med_comb[mask]
+        if len(flux_vals) == 0:
+            print(f"Line {vel_lines[i]} is out of range")
+            continue
         wave_vals = gwave[mask]
         
         p0 = [-np.min(flux_vals), vel_lines[i], 2.0, 1] # Guess that the minimum flux is the peak of the fit
@@ -213,7 +246,7 @@ def fit_vel_lines(gwave, med_comb, grapher):
     line_velocities_karp = [] # The velocites of the absorption lines that we get from KARP
     for i in range(len(vel_fit)):
         mu= vel_fit[i][1]
-        line_velocities_karp.append(((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)
+        line_velocities_karp.append(((float(mu)-float(vel_lines[vel_fit_linenum[i]]))/float(vel_lines[vel_fit_linenum[i]]))*3*10**5)
     
     #plot the region around graphs
     grapher.plot_vel_lines(vel_fit, vel_fit_linenum, vel_lines, gwave, med_comb, vel_mask)
@@ -223,3 +256,74 @@ def fit_vel_lines(gwave, med_comb, grapher):
     radial_vel_err = np.std(line_velocities_karp)
     print("Radial velocity:",radial_vel,"+/-", radial_vel_err)        
     # Look for HI line, 4471.5
+    return radial_vel
+    
+@njit
+def fit_flux(i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
+    flux_raw_cor1_np, flux_masked_global, sky_raw1, norm_line_width, rm_param=1.3):
+    
+    if Fnorm_Es[i] > rm_param:
+        return np.full(8, np.nan)  # Skip
+
+    lam_left = max(0, i - norm_line_width)
+    lam_right = min(len(wavelengths_np), i + norm_line_width)
+    
+    wavelength = wavelengths_np[i]
+    sky = sky_raw1[i]
+    flux = flux_raw_cor1_np[i]
+
+    wave_range = []
+    flux_values = []
+    if removed_index[i] == 0:
+        # Build boolean mask
+        for k in range(lam_left, lam_right):
+            if include[k] and removed_index[k] == 0:
+                wave_range.append(wavelengths_np[k])
+                flux_values.append(flux_raw_cor1_np[k])
+        if len(wave_range) < 2:
+            return np.full(8, np.nan)
+        #Linear fit
+        ml, bl = linear_fit_numba(np.array(wave_range), np.array(flux_values))
+    else:
+        for k in range(lam_left, lam_right):
+            val = flux_masked_global[k]
+            if not np.isnan(val):
+                wave_range.append(wavelengths_np[k])
+                flux_values.append(val)
+        if len(wave_range) < 2:
+            return np.full(8, np.nan)
+        ml, bl = linear_fit_numba(np.array(wave_range), np.array(flux_values))
+        
+    fitted_value = ml * wavelength + bl
+    flux_m = flux_masked[i]
+    
+    if not np.isnan(flux_m):
+        return np.array([fitted_value, sky, flux, wavelength, flux_m, np.nan, wavelength, np.nan])
+    else:
+        return np.array([fitted_value, sky, flux, wavelength, np.nan, flux, np.nan, wavelength])
+
+@njit
+def fit_all_fluxes(Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
+                   flux_raw_cor1_np, flux_masked_global, sky_raw1, norm_line_width):
+    n = len(Fnorm_Es)
+    results = np.full((n, 8), np.nan)
+    for i in prange(n):
+        results[i] = fit_flux(i, Fnorm_Es, wavelengths_np, flux_masked, include, removed_index,
+                                    flux_raw_cor1_np, flux_masked_global, sky_raw1, norm_line_width)
+    return results
+
+@njit
+def linear_fit_numba(x, y):
+    n = len(x)
+    if n < 2:
+        return np.nan, np.nan
+    sx = np.sum(x)
+    sy = np.sum(y)
+    sxx = np.sum(x * x)
+    sxy = np.sum(x * y)
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return np.nan, np.nan
+    m = (n * sxy - sx * sy) / denom
+    b = (sxx * sy - sx * sxy) / denom
+    return m, b

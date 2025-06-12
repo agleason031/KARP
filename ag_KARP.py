@@ -148,6 +148,7 @@ if __name__ == "__main__":
     fstop = int(params["fstop"]) # The last flat image, assuming the flats are ordered sequentially
     bstart = int(params["bstart"]) # The first bias image assuming the bias images are ordered sequentially
     bstop = int(params["bstop"]) # The last bias image, assuming the bias images are ordered sequentially
+    metal_mask = list(map(float, eval(params["metal_mask"])))
     target_dir = str(params["target_dir"])
     skip_red = functions.string_to_bool(params["skip_red"])
     comb_spec = functions.string_to_bool(params["comb_spec"])
@@ -193,11 +194,12 @@ if __name__ == "__main__":
     if (optimize == True):
         bounds = [
             (5, 15),    # a_width
-            (125 / 5, 250 / 5),    # norm_line_width
+            (130 / 5, 250 / 5),    # norm_line_width
             (50 / 5, 100 / 5),    # norm_line_boxcar
             ] # division by 5 is to reduce parameter space and speed up optimization
+        #x0 = (sci_mods.appw, sci_mods.norm_line_width, sci_mods.norm_line_boxcar)
         
-        res = differential_evolution(negative_snr, bounds=bounds, maxiter=20, strategy='best1bin', popsize=5, tol=2)
+        res = differential_evolution(negative_snr, bounds=bounds, maxiter=15, strategy='best1bin', popsize=4, tol=8, atol=10, workers=1, mutation=(0.2, 0.5))
         optimal_width = int(round(res.x[0])) * 2 + 1
         optimal_snr = -res.fun
         optimal_norm_width = res.x[1] * 5
@@ -209,8 +211,8 @@ if __name__ == "__main__":
         SNR = process_images((sci_mods.appw, sci_mods.norm_line_width, sci_mods.norm_line_boxcar))    
         
     if (fit_lines == True):
-        sci_tools.fit_vel_lines(sci_mods.gwave, sci_mods.med_comb, grapher)
-        sci_tools.fit_metal_lines(sci_mods.gwave, sci_mods.med_comb, sci_mods.sig_final, grapher)
+        radial_vel = sci_tools.fit_vel_lines(sci_mods.gwave, sci_mods.med_comb, grapher)
+        sci_tools.fit_metal_lines(sci_mods.gwave, sci_mods.med_comb, sci_mods.sig_final, metal_mask, radial_vel, grapher)
         
 #--------------------------------------------------------
 #finishing tasks
@@ -218,7 +220,7 @@ if __name__ == "__main__":
     # Duration_run is how long KARP took to run
     duration_run = timedelta(seconds=time.perf_counter()-starttime)
     with open(target_dir+"OUT/KARP_OUT_log.txt", "a") as f:
-        f.write("KARP took:"+str(duration_run)+" to run\n")
+        f.write(f"KARP took: {duration_run} to run\n")
         f.write("><(((º>")
     
     #play finishing sound

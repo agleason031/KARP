@@ -52,6 +52,13 @@ def y_lam(y, fit, v_helio):
     # Wavelength as a function of pixel with helocentric velocity correction
     return ((a*(y/2000)**3)+(b*(y/2000)**2)+c*(y/2000)+d)*(1+(v_helio/(3*10**5)))
 
+def y_lam_4(y, fit, v_helio):
+    e, a, b, c, d = fit
+    # Vectorize array
+    y = np.array(y)
+    # Wavelength as a function of pixel with helocentric velocity correction
+    return (e*(y/2000)**4+(a*(y/2000)**3)+(b*(y/2000)**2)+c*(y/2000)+d)*(1+(v_helio/(3*10**5)))
+
 def fit_cent_gaussian(x_vals, y_vals, y_bck, clr):
     if x_vals is None:
         return [np.nan, np.nan, np.nan, np.nan]

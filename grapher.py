@@ -26,7 +26,7 @@ class grapher:
         self.bckw = int(params["bckw"]) # The width of the background in pixels, (on either side of the buffer)
 
     #fit individual plots for each metal line
-    def metal_line_plt(self, metal_fits, gwave, mask, med_comb, lines):
+    def metal_line_plt(self, metal_fits, gwave, masks, med_comb, lines, center_shifts):
         for i, popt in enumerate(metal_fits):
             plt.clf()
             fig, ax = plt.subplots(1, 1, figsize=(8,6))
@@ -34,22 +34,28 @@ class grapher:
             ax.plot(gwave,G(gwave,popt[0],popt[1],popt[2], popt[3]))
             ax.axhline(1,color="red",linestyle="--")
             ax.axvline(popt[1],color="black",linestyle="--")
-            ax.set_xlim(int(lines[i]-5),int(lines[i]+5))
+            ax.axvline(lines[i],color="blue",linestyle="--")
+            ax.axvline(lines[i]+center_shifts[i], color="green", linestyle="--")
+            ax.set_xlim(int(lines[i]-5+center_shifts[i]),int(lines[i]+5)+center_shifts[i])
             ax.set_xlabel("Wavelength (A)")
             ax.set_ylabel("Median Normalized Flux")
             ax.set_title("Metal line fit at "+str(lines[i])+" A")
-            '''
+            
             #set y scale for each plot
-            ydata = med_comb[mask]
-            ymin = np.nanmin(ydata)
-            ymax = np.nanmax(ydata)
-            yrange = ymax - ymin
-            ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
-            '''
+            ydata = med_comb[masks[i]]
+            try: #safeguard for data out of range
+                ymin = np.nanmin(ydata)
+                ymax = np.nanmax(ydata)
+            except ValueError:
+                ymin = 1
+                ymax = 1
+            ax.set_ylim(min(.9, ymin-0.05), max(ymax+0.05, 1.1))
+            
             plt.tight_layout(rect=[0.06, 0.06, 1, 1])  # Leave space for global labels
             plt.savefig(self.target_dir + f"OUT/{lines[i]}_metal_line.png", dpi=300)
+            ax.clear()
 
-    def metal_line_big_plt(self, metal_fits, metal_lines, metal_mask, gwave, med_comb):
+    def metal_line_big_plt(self, metal_fits, metal_lines, masks, gwave, med_comb, center_shifts):
         n_lines = len(metal_lines)
         ncols = 4
         nrows = int(np.ceil(n_lines / ncols))
@@ -58,22 +64,25 @@ class grapher:
     
         for i, popt in enumerate(metal_fits):
             ax = axs[i]
-            mask = (gwave > metal_lines[i] - metal_mask[i]) & (gwave < metal_lines[i] + metal_mask[i])
             ax.scatter(gwave, med_comb, s=5, color="black")
             ax.plot(gwave, G(gwave, *popt), color="orange")
             ax.axhline(1, color="red", linestyle="--", linewidth=0.8)
             ax.axvline(popt[1], color="blue", linestyle="--", linewidth=0.8)
-            ax.set_xlim(metal_lines[i] - 5, metal_lines[i] + 5)
+            ax.axvline(metal_lines[i],color="blue",linestyle="--")
+            ax.set_xlim(int(metal_lines[i]-5+center_shifts[i]),int(metal_lines[i]+5)+center_shifts[i])
             ax.set_title(f"{metal_lines[i]:.1f} Å")
             # Remove individual axis labels for clarity
             ax.set_xlabel("")
             ax.set_ylabel("")
             #set y scale for each plot
-            ydata = med_comb[mask]
-            ymin = np.nanmin(ydata)
-            ymax = np.nanmax(ydata)
-            yrange = ymax - ymin
-            ax.set_ylim(ymin - 0.1*yrange, ymax + 0.1*yrange)
+            ydata = med_comb[masks[i]]
+            try: #safeguard for data out of range
+                ymin = np.nanmin(ydata)
+                ymax = np.nanmax(ydata)
+            except ValueError:
+                ymin = 1
+                ymax = 1
+            ax.set_ylim(min(.9, ymin-0.05), max(ymax+0.05, 1.1))
         
         # Hide unused subplots
         for j in range(i+1, len(axs)):
@@ -91,8 +100,8 @@ class grapher:
             a, mu, sig, bck = vel_fit[i]
             print("For line:",vel_fit_linenum[i]+1,"KARP fit:",mu,"Angstroms")
             print("a:",a,"sig:",sig,"bck:",bck)
-            print("(lam-lam_0)/lam_0:",((float(mu)-float(vel_lines[i]))/float(vel_lines[i])),"A")
-            print("mu in km/s:",((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)
+            print("(lam-lam_0)/lam_0:",((float(mu)-float(vel_lines[vel_fit_linenum[i]]))/float(vel_lines[vel_fit_linenum[i]])),"A")
+            print("mu in km/s:",((float(mu)-float(vel_lines[vel_fit_linenum[i]]))/float(vel_lines[vel_fit_linenum[i]]))*3*10**5)
             
             plt.cla()
             fig, axVel = plt.subplots(1, 1, figsize=(8,6))
@@ -100,15 +109,15 @@ class grapher:
             axVel.plot(gwave,G(gwave,a,mu,sig,bck))
             axVel.axhline(1,color="red",linestyle="--")
             axVel.axvline(mu,color="black",linestyle="--")
-            axVel.axvline(vel_lines[i],color="blue",linestyle="--")
-            axVel.set_xlim(int(vel_lines[i]-vel_mask[i]),int(vel_lines[i]+vel_mask[i]))
+            axVel.axvline(vel_lines[vel_fit_linenum[i]],color="blue",linestyle="--")
+            axVel.set_xlim(int(vel_lines[vel_fit_linenum[i]]-vel_mask[i]),int(vel_lines[vel_fit_linenum[i]]+vel_mask[i]))
             axVel.set_xlabel("Wavelength (A)")
             axVel.set_ylabel("Median Normalized Flux")
-            del_vel_lam = np.round(float(mu)-float(vel_lines[i]),decimals=4)
+            del_vel_lam = np.round(float(mu)-float(vel_lines[vel_fit_linenum[i]]),decimals=4)
             axVel.set_title("lam-lam_0: "+str(del_vel_lam)+" A")
             if i >= 8:
                 axVel.set_ylim(0.9,1.1)
-                axVel.set_title("HeI "+str(vel_lines[i])+"A line lam-lam_0: "+str(del_vel_lam)+" A radV: "+str(((float(mu)-float(vel_lines[i]))/float(vel_lines[i]))*3*10**5)+"km/s")
+                axVel.set_title("HeI "+str(vel_lines[vel_fit_linenum[i]])+"A line lam-lam_0: "+str(del_vel_lam)+" A radV: "+str(((float(mu)-float(vel_lines[vel_fit_linenum[i]]))/float(vel_lines[vel_fit_linenum[i]]))*3*10**5)+"km/s")
             
             plt.savefig(self.target_dir+"OUT/"+self.objid+"_Vel_"+str(i+1)+".png", dpi=300)
         
