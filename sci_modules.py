@@ -11,7 +11,6 @@ from scipy.ndimage import uniform_filter1d, uniform_filter
 from scipy.interpolate import interp1d
 from astropy.nddata import CCDData
 from astropy.table import Table
-from astropy.stats import jackknife_stats
 from functions import fit_cent_gaussian, G, build_fit_args, gaussian_integral_vec
 from functions import format_fits_filename, y_lam, con_lam
 from sci_tools import heliocentric_correction, fit_all_fluxes
@@ -168,9 +167,9 @@ class sci_modules:
         x1_br = c + self.appw + self.buffw
         x2_br = c + self.appw + self.buffw + self.bckw
         
-        ap_flux = gaussian_integral_vec(a, mu, sigma, bck, x1_ap, x2_ap)
-        bkg_right = gaussian_integral_vec(a, mu, sigma, bck, x1_br, x2_br)
-        flux_valid = ap_flux - (self.appw / self.bckw) * (bkg_right)
+        ap_flux = gaussian_integral_vec(a, mu, sigma, bck+1000, x1_ap, x2_ap) #adding 1000 to prevent negative bck values which cause the integral to sum the wrong part
+        bkg_right = gaussian_integral_vec(a, mu, sigma, bck+1000, x1_br, x2_br)
+        flux_valid = ap_flux - (((self.appw * 2) / self.bckw) * (bkg_right)) #note appw is not actual width, it is half width
         
         # Sky background is just the flat background level scaled to aperture width
         sky_valid = bck * (2 * self.appw)
@@ -183,6 +182,13 @@ class sci_modules:
         if (verbose == True):
             # Plot output raw flux (We can remove CRs later)
             self.grapher.plot_raw_flux(flux_raw1, scinum)
+            for i in range(1, len(flux_valid), 10):
+                print(f"Flux fitted value: {flux_valid[i]}")
+                if (flux_valid[i] < 0):
+                    print(f"Parameters: {a[i]} {mu[i]} {sigma[i]} {bck[i]}")
+                    print(f"integrals: {ap_flux[i]} {bkg_right[i]}")
+                    print(f"widths: {self.appw*2} {self.bckw}")
+                    print(f"{c[i]}")
         
     #--------------------------------------
     #wavelength calibration
@@ -512,7 +518,6 @@ class sci_modules:
         jackknife = False
         
         print("KARP is combining spectra")
-        # Make a KARP_OUT_log file
         with open(self.target_dir+"OUT/KARP_OUT_log.txt", "w") as fo:
             fo.write("KARP is combining spectra\n")
         
@@ -579,11 +584,8 @@ class sci_modules:
         
         if jackknife == True:
             n_files = len(file_names)
-            #indices = np.arange(n_files)
-            
-            #snr_jackknife, bias, snr_stddev = jackknife_stats(indices, compute_snr_from_files)
             for i in range(n_files):
-                leaveout_indices = [i]
+                leaveout_indices = [i] #leaves out a single file and calculates SNR
                 compute_snr_from_files(leaveout_indices)
         else: #do all files
             leaveout_indices = []

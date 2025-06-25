@@ -31,6 +31,9 @@ def get_var_name(var):
             return name
     return None  # If no match is found
 
+def median_scale_func(im):
+    return np.median(im.data)
+
 #returns correction needed for earth's motion
 def heliocentric_correction(objRA, objDEC, otime):
     # Find heliocentric correction velocity
@@ -79,7 +82,7 @@ def get_cal_images(blist, flist, verbose, grapher):
     
     # Make a master flat from the flat images
     print("Making Master Flat")
-    masterflat = ccdproc.combine(flist, method='median', unit='adu',sigma_clip=False,mem_limit=350e6)
+    masterflat = ccdproc.combine(flist, method='median', scale=median_scale_func, unit='adu',sigma_clip=False,mem_limit=350e6)
   
     # Subtract Master Bias from Master Flat
     masterflatDEbias = ccdproc.subtract_bias(masterflat,masterbias)
@@ -198,7 +201,7 @@ def fit_metal_lines(gwave, med_comb, sig_final, metal_mask, radial_vel, grapher)
     with open(csv_path, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow([
-            "Line (A)", "EW_g", "EW_riemann", "Error", "Sys", "Adopted_EW", "Adopted_Error, Width of Mask"
+            "Line (A)", "EW_g", "EW_riemann", "Error", "Sys", "Adopted_EW", "Adopted_Error", "Width of Mask"
         ])
         writer.writerows(metal_results)
     print(f"Metal line results written to {csv_path}")

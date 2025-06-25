@@ -16,6 +16,7 @@ from astropy import log
 log.setLevel('ERROR')
 from scipy.optimize import differential_evolution
 from grapher import grapher
+from ccdproc import CCDData
 import numpy as np
 import argparse
 import warnings
@@ -90,8 +91,8 @@ def process_images(x):
         
     if skip_red == False or optimize == True:
         #get image filenames
-        blist = [functions.format_fits_filename(dloc, b) for b in bim]
-        flist = [functions.format_fits_filename(dloc, f) for f in fim]
+        blist = [CCDData.read(functions.format_fits_filename(dloc, b), unit='adu') for b in bim]
+        flist = [CCDData.read(functions.format_fits_filename(dloc, f), unit='adu') for f in fim]
         sci_list = [functions.format_fits_filename(dloc, s) for s in sim]
     
         masterbias, final_flat = sci_tools.get_cal_images(blist, flist, verbose, grapher) #verbose overwritten to false
@@ -182,8 +183,8 @@ if __name__ == "__main__":
     flux_raw_cor1 = []
     wavelengths = []
     # Global variables
-    fim = np.arange(fstart,fstop,1)
-    bim = np.arange(bstart,bstop,1)
+    fim = np.arange(fstart,fstop+1,1)
+    bim = np.arange(bstart,bstop+1,1)
     sim = np.arange(scistart, scistop, 1)
     
     # Make a global "OUT" folder to keep finalized outputs
@@ -193,7 +194,7 @@ if __name__ == "__main__":
     
     if (optimize == True):
         bounds = [
-            (5, 15),    # a_width
+            (10, 20),    # a_width
             (130 / 5, 250 / 5),    # norm_line_width
             (50 / 5, 100 / 5),    # norm_line_boxcar
             ] # division by 5 is to reduce parameter space and speed up optimization
